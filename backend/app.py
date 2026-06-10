@@ -101,6 +101,21 @@ def current_user():
     return db.session.get(User, user_id)
 
 
+@app.errorhandler(Exception)
+def handle_exception(e):
+    # Pass through HTTP errors
+    from werkzeug.exceptions import HTTPException
+    if isinstance(e, HTTPException):
+        return e
+    
+    # Return JSON traceback for non-HTTP errors
+    import traceback
+    return jsonify({
+        "error": str(e),
+        "traceback": traceback.format_exc()
+    }), 500
+
+
 # ── Global Request Status Guard ───────────────────────────────────────────────
 from flask_jwt_extended import verify_jwt_in_request, get_jwt_identity
 
