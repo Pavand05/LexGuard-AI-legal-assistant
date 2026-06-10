@@ -1,0 +1,19 @@
+Flask==3.1.1
+flask-cors==6.0.1
+PyMuPDF==1.26.1
+python-docx==1.1.0
+
+# Auth packages
+flask-sqlalchemy==3.1.1
+flask-jwt-extended==4.7.1
+flask-bcrypt==1.0.1
+
+# AI/ML packages (required for advanced features)
+langchain
+langchain-community
+langchain-text-splitters
+sentence-transformers
+chromadb
+faiss-cpu
+ctransformers
+llama-cpp-python

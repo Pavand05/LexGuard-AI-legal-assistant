@@ -1,0 +1,25 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.ipynb_checkpoints
+backend/uploads/
+
+# Local databases
+backend/legal_ai.db
+
+# Environments & API keys
+backend/.env
+.venv/
+venv/
+ENV/
+env/
+
+# Node/React artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/.eslintcache
+
+# OS artifacts
+.DS_Store
+Thumbs.db
