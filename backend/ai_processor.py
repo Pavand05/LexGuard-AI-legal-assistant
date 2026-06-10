@@ -12,8 +12,6 @@ except ImportError:
 
 # LangChain imports (langchain-core v1.x / langchain v1.x)
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import FAISS, Chroma
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
@@ -314,6 +312,9 @@ class DocumentProcessor:
             return {"answer": answer, "sources": best_chunks}
 
         # ── Slow path: load/reuse cached HuggingFace embeddings ──────────────
+        from langchain_community.embeddings import HuggingFaceEmbeddings
+        from langchain_community.vectorstores import FAISS, Chroma
+
         if _embeddings_cache is None:
             print("[RAG] Loading HuggingFace embeddings model (first time only)...")
             _embeddings_cache = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
