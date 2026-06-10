@@ -289,11 +289,11 @@ def delete_document(doc_id):
 # ──────────────────────────────────────────────────────────────────────────────
 # Entrypoint
 # ──────────────────────────────────────────────────────────────────────────────
-if __name__ == '__main__':
-    with app.app_context():
+with app.app_context():
+    try:
         db.create_all()
         print("Database tables created / verified.")
-
+        
         # Seed default admin if not exists
         admin = User.query.filter_by(email="admin@legalai.com").first()
         if not admin:
@@ -302,12 +302,17 @@ if __name__ == '__main__':
             db.session.add(admin)
             db.session.commit()
             print("Default admin account created: admin@legalai.com / admin123")
+    except Exception as e:
+        print(f"Database/admin initialization error: {e}")
 
-
-    print("Initializing AI Document Processor...")
+print("Initializing AI Document Processor...")
+try:
     document_processor.initialize_llm()
     print("AI Processor initialized successfully")
+except Exception as e:
+    print(f"AI Processor initialization error: {e}")
 
+if __name__ == '__main__':
     # Bind to host 0.0.0.0 and dynamic environment PORT for cloud environments like Render
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
