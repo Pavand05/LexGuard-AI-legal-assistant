@@ -33,8 +33,11 @@ else:
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 db_url = os.environ.get('DATABASE_URL')
-if db_url and db_url.startswith("postgres://"):
-    db_url = db_url.replace("postgres://", "postgresql://", 1)
+if db_url:
+    if db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql+pg8000://", 1)
+    elif db_url.startswith("postgresql://"):
+        db_url = db_url.replace("postgresql://", "postgresql+pg8000://", 1)
 
 if not db_url:
     if os.environ.get('VERCEL'):
