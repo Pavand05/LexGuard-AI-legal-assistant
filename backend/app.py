@@ -38,6 +38,11 @@ if db_url:
         db_url = db_url.replace("postgres://", "postgresql+pg8000://", 1)
     elif db_url.startswith("postgresql://"):
         db_url = db_url.replace("postgresql://", "postgresql+pg8000://", 1)
+    
+    # Strip any sslmode query parameter because pg8000 handles SSL automatically and will throw an error if it is passed in the URL
+    if "sslmode=" in db_url:
+        import re
+        db_url = re.sub(r'[\?&]sslmode=[^&]+', '', db_url)
 
 if not db_url:
     if os.environ.get('VERCEL'):
