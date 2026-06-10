@@ -29,7 +29,10 @@ BASE_DIR      = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-app.config['SQLALCHEMY_DATABASE_URI']        = f"sqlite:///{os.path.join(BASE_DIR, 'legal_ai.db')}"
+db_url = os.environ.get('DATABASE_URL')
+if db_url and db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql://", 1)
+app.config['SQLALCHEMY_DATABASE_URI']        = db_url or f"sqlite:///{os.path.join(BASE_DIR, 'legal_ai.db')}"
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY']                 = os.environ.get('JWT_SECRET_KEY', 'change-me-in-production-32chars!!')
 app.config['JWT_ACCESS_TOKEN_EXPIRES']       = 86400   # 24 hours (seconds)
@@ -302,5 +305,6 @@ if __name__ == '__main__':
     document_processor.initialize_llm()
     print("AI Processor initialized successfully")
 
-    # use_reloader=False prevents WinError 10038 socket crash on Windows
-    app.run(debug=True, port=5000, use_reloader=False)
+    # Bind to host 0.0.0.0 and dynamic environment PORT for cloud environments like Render
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False)

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Scale, Mail, Lock, User, Eye, EyeOff, Loader2, Shield, FileText, Brain } from 'lucide-react';
 
-const API = 'http://localhost:5000';
+const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
 export default function AuthPage({ onAuth }) {
   const [mode, setMode]           = useState('login');   // 'login' | 'register'

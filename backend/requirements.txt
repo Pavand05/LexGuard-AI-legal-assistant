@@ -17,3 +17,5 @@ chromadb
 faiss-cpu
 ctransformers
 llama-cpp-python
+psycopg2-binary==2.9.9
+

@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import DocumentLibrary from './DocumentLibrary';
 
-const API = 'http://localhost:5000';
+const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
 const LegalAIAssistant = ({ user, token, onLogout }) => {
   // Main sidebar tab state
