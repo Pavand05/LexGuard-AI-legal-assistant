@@ -26,7 +26,10 @@ app = Flask(__name__)
 
 # ----- Config ----------------------------------------------------------------
 BASE_DIR      = os.path.dirname(os.path.abspath(__file__))
-UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
+if os.environ.get('VERCEL') or os.environ.get('DATABASE_URL'):
+    UPLOAD_FOLDER = '/tmp/uploads'
+else:
+    UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 db_url = os.environ.get('DATABASE_URL')

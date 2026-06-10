@@ -8,16 +8,11 @@ flask-sqlalchemy==3.1.1
 flask-jwt-extended==4.7.1
 flask-bcrypt==1.0.1
 
-# AI/ML packages (required for advanced features)
+# AI/ML packages (required for Vercel Serverless)
 langchain
 langchain-community
 langchain-text-splitters
-sentence-transformers
-chromadb
-faiss-cpu
-ctransformers
-llama-cpp-python
-psycopg2-binary==2.9.9
 langchain-groq
-
-
+faiss-cpu
+chromadb
+psycopg2-binary==2.9.9
