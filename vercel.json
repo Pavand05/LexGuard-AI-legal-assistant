@@ -1,63 +1,21 @@
 {
-  "version": 2,
+  "cleanUrls": true,
+  "outputDirectory": "frontend/dist",
   "functions": {
     "api/index.py": {
       "includeFiles": "backend/**"
     }
   },
-  "builds": [
-    {
-      "src": "api/index.py",
-      "use": "@vercel/python"
-    },
-    {
-      "src": "frontend/package.json",
-      "use": "@vercel/static-build",
-      "config": {
-        "distDir": "dist"
-      }
-    }
-  ],
-  "routes": [
-    {
-      "src": "/auth/(.*)",
-      "dest": "api/index.py"
-    },
-    {
-      "src": "/upload",
-      "dest": "api/index.py"
-    },
-    {
-      "src": "/chat",
-      "dest": "api/index.py"
-    },
-    {
-      "src": "/documents(.*)",
-      "dest": "api/index.py"
-    },
-    {
-      "src": "/health",
-      "dest": "api/index.py"
-    },
-    {
-      "src": "/admin/(.*)",
-      "dest": "api/index.py"
-    },
-    {
-      "src": "/cases(.*)",
-      "dest": "api/index.py"
-    },
-    {
-      "src": "/appointments(.*)",
-      "dest": "api/index.py"
-    },
-    {
-      "src": "/activities",
-      "dest": "api/index.py"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "frontend/$1"
-    }
+  "rewrites": [
+    { "source": "/auth/(.*)", "destination": "/api" },
+    { "source": "/upload", "destination": "/api" },
+    { "source": "/chat", "destination": "/api" },
+    { "source": "/documents(.*)", "destination": "/api" },
+    { "source": "/health", "destination": "/api" },
+    { "source": "/admin/(.*)", "destination": "/api" },
+    { "source": "/cases(.*)", "destination": "/api" },
+    { "source": "/appointments(.*)", "destination": "/api" },
+    { "source": "/activities", "destination": "/api" },
+    { "source": "/(.*)", "destination": "/$1" }
   ]
 }
