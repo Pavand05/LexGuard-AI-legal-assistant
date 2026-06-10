@@ -35,7 +35,14 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 db_url = os.environ.get('DATABASE_URL')
 if db_url and db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql://", 1)
-app.config['SQLALCHEMY_DATABASE_URI']        = db_url or f"sqlite:///{os.path.join(BASE_DIR, 'legal_ai.db')}"
+
+if not db_url:
+    if os.environ.get('VERCEL'):
+        db_url = "sqlite:////tmp/legal_ai.db"
+    else:
+        db_url = f"sqlite:///{os.path.join(BASE_DIR, 'legal_ai.db')}"
+
+app.config['SQLALCHEMY_DATABASE_URI']        = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY']                 = os.environ.get('JWT_SECRET_KEY', 'change-me-in-production-32chars!!')
 app.config['JWT_ACCESS_TOKEN_EXPIRES']       = 86400   # 24 hours (seconds)
