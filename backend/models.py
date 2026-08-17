@@ -273,3 +273,152 @@ class Activity(db.Model):
             'action':     self.action,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
+
+
+# ==============================================================================
+# MULTI-AGENT SYSTEM DATABASE EXTENSIONS (LEXGUARD-MA)
+# ==============================================================================
+
+class AgentRun(db.Model):
+    __tablename__ = 'agent_runs'
+
+    id            = db.Column(db.Integer, primary_key=True)
+    run_id        = db.Column(db.String(64), unique=True, nullable=False, index=True)
+    document_id   = db.Column(db.Integer, db.ForeignKey('documents.id'), nullable=True, index=True)
+    user_id       = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    workflow_type = db.Column(db.String(50), default='parallel')  # single | sequential | parallel | debate
+    status        = db.Column(db.String(50), default='completed')
+    latency_ms    = db.Column(db.Integer, default=0)
+    health_score  = db.Column(db.Integer, default=100)
+    summary_text  = db.Column(db.Text, default='')
+    payload_json  = db.Column(db.Text, default='{}')
+    created_at    = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    findings = db.relationship('AgentFinding', back_populates='run', cascade='all, delete-orphan')
+
+    def __init__(self, run_id=None, document_id=None, user_id=None, workflow_type='parallel', status='completed', latency_ms=0, health_score=100, summary_text='', payload_json='{}', created_at=None, **kwargs):
+        # pyrefly: ignore [unexpected-keyword]
+        super().__init__(run_id=run_id, document_id=document_id, user_id=user_id, workflow_type=workflow_type, status=status, latency_ms=latency_ms, health_score=health_score, summary_text=summary_text, payload_json=payload_json, created_at=created_at, **kwargs)
+
+    def to_dict(self):
+        return {
+            'id':            self.id,
+            'run_id':        self.run_id,
+            'document_id':   self.document_id,
+            'user_id':       self.user_id,
+            'workflow_type': self.workflow_type,
+            'status':        self.status,
+            'latency_ms':    self.latency_ms,
+            'health_score':  self.health_score,
+            'summary_text':  self.summary_text,
+            'created_at':    self.created_at.isoformat() if self.created_at else None
+        }
+
+
+class AgentFinding(db.Model):
+    __tablename__ = 'agent_findings'
+
+    id              = db.Column(db.Integer, primary_key=True)
+    run_id          = db.Column(db.String(64), db.ForeignKey('agent_runs.run_id'), nullable=False, index=True)
+    document_id     = db.Column(db.Integer, db.ForeignKey('documents.id'), nullable=True)
+    agent_name      = db.Column(db.String(100), nullable=False)
+    dimension       = db.Column(db.String(50), default='Legal')
+    risk_level      = db.Column(db.String(50), default='LOW')
+    risk_score      = db.Column(db.Integer, default=20)
+    clause_type     = db.Column(db.String(100), default='General')
+    clause_text     = db.Column(db.Text, default='')
+    page_number     = db.Column(db.Integer, default=1)
+    reason          = db.Column(db.Text, default='')
+    recommendation  = db.Column(db.Text, default='')
+    citation_status = db.Column(db.String(50), default='UNVERIFIED')
+    confidence      = db.Column(db.Float, default=0.85)
+
+    run = db.relationship('AgentRun', back_populates='findings')
+
+    def __init__(self, run_id=None, document_id=None, agent_name=None, dimension='Legal', risk_level='LOW', risk_score=20, clause_type='General', clause_text='', page_number=1, reason='', recommendation='', citation_status='UNVERIFIED', confidence=0.85, **kwargs):
+        # pyrefly: ignore [unexpected-keyword]
+        super().__init__(run_id=run_id, document_id=document_id, agent_name=agent_name, dimension=dimension, risk_level=risk_level, risk_score=risk_score, clause_type=clause_type, clause_text=clause_text, page_number=page_number, reason=reason, recommendation=recommendation, citation_status=citation_status, confidence=confidence, **kwargs)
+
+    def to_dict(self):
+        return {
+            'id':              self.id,
+            'run_id':          self.run_id,
+            'agent_name':      self.agent_name,
+            'dimension':       self.dimension,
+            'risk_level':      self.risk_level,
+            'risk_score':      self.risk_score,
+            'clause_type':     self.clause_type,
+            'clause_text':     self.clause_text,
+            'page_number':     self.page_number,
+            'reason':          self.reason,
+            'recommendation':  self.recommendation,
+            'citation_status': self.citation_status,
+            'confidence':      self.confidence
+        }
+
+
+class ContractObligation(db.Model):
+    __tablename__ = 'contract_obligations'
+
+    id            = db.Column(db.Integer, primary_key=True)
+    document_id   = db.Column(db.Integer, db.ForeignKey('documents.id'), nullable=True, index=True)
+    case_id       = db.Column(db.Integer, db.ForeignKey('cases.id'), nullable=True, index=True)
+    user_id       = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    party         = db.Column(db.String(150), nullable=False)
+    obligation    = db.Column(db.Text, nullable=False)
+    deadline      = db.Column(db.String(150), default='Ongoing')
+    frequency     = db.Column(db.String(50), default='Event-based')
+    trigger_event = db.Column(db.String(255), default='Contract Execution')
+    consequence   = db.Column(db.String(255), default='Default & Breach')
+    status        = db.Column(db.String(50), default='Upcoming') # Upcoming | Due Soon | Overdue | Completed
+    created_at    = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    def __init__(self, document_id=None, case_id=None, user_id=None, party=None, obligation=None, deadline='Ongoing', frequency='Event-based', trigger_event='Contract Execution', consequence='Default & Breach', status='Upcoming', created_at=None, **kwargs):
+        # pyrefly: ignore [unexpected-keyword]
+        super().__init__(document_id=document_id, case_id=case_id, user_id=user_id, party=party, obligation=obligation, deadline=deadline, frequency=frequency, trigger_event=trigger_event, consequence=consequence, status=status, created_at=created_at, **kwargs)
+
+    def to_dict(self):
+        return {
+            'id':            self.id,
+            'document_id':   self.document_id,
+            'case_id':       self.case_id,
+            'party':         self.party,
+            'obligation':    self.obligation,
+            'deadline':      self.deadline,
+            'frequency':     self.frequency,
+            'trigger_event': self.trigger_event,
+            'consequence':   self.consequence,
+            'status':        self.status,
+            'created_at':    self.created_at.isoformat() if self.created_at else None
+        }
+
+
+class EvaluationRun(db.Model):
+    __tablename__ = 'evaluation_runs'
+
+    id                 = db.Column(db.Integer, primary_key=True)
+    pipeline_type      = db.Column(db.String(50), nullable=False) # single | sequential | parallel | debate
+    dataset_name       = db.Column(db.String(100), default='Synthetic Legal Benchmark Corpus')
+    accuracy           = db.Column(db.Float, default=0.0)
+    hallucination_rate = db.Column(db.Float, default=0.0)
+    latency_ms         = db.Column(db.Integer, default=0)
+    token_count        = db.Column(db.Integer, default=0)
+    metrics_json       = db.Column(db.Text, default='{}')
+    created_at         = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    def __init__(self, pipeline_type=None, dataset_name='Synthetic Legal Benchmark Corpus', accuracy=0.0, hallucination_rate=0.0, latency_ms=0, token_count=0, metrics_json='{}', created_at=None, **kwargs):
+        # pyrefly: ignore [unexpected-keyword]
+        super().__init__(pipeline_type=pipeline_type, dataset_name=dataset_name, accuracy=accuracy, hallucination_rate=hallucination_rate, latency_ms=latency_ms, token_count=token_count, metrics_json=metrics_json, created_at=created_at, **kwargs)
+
+    def to_dict(self):
+        return {
+            'id':                 self.id,
+            'pipeline_type':      self.pipeline_type,
+            'dataset_name':       self.dataset_name,
+            'accuracy':           self.accuracy,
+            'hallucination_rate': self.hallucination_rate,
+            'latency_ms':         self.latency_ms,
+            'token_count':        self.token_count,
+            'metrics':            json.loads(self.metrics_json) if self.metrics_json else {},
+            'created_at':         self.created_at.isoformat() if self.created_at else None
+        }

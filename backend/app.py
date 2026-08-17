@@ -17,6 +17,7 @@ from extensions import db, jwt, bcrypt
 from models import User, Document
 from auth import auth_bp
 from cases_api import cases_bp
+from agent_routes import agent_bp
 from ai_processor import document_processor
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -67,6 +68,7 @@ CORS(app)
 # ----- Blueprints ------------------------------------------------------------
 app.register_blueprint(auth_bp)
 app.register_blueprint(cases_bp)
+app.register_blueprint(agent_bp)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
