@@ -260,6 +260,13 @@ class MultiAgentOrchestrator:
         privacy_data = results_by_agent.get("Privacy & PII Agent")
         missing_data = results_by_agent.get("Missing Clause Agent")
 
+        # Structured Section 23 Schema elements
+        doc_meta = doc_res.data or {}
+        l_ctx = doc_meta.get("legal_context", {})
+        
+        has_arbitration = any(c.get("canonical_id") in ["DISPUTE_RESOLUTION_ARBITRATION", "ARBITRATION"] for c in clauses)
+        has_court = bool(l_ctx.get("court_jurisdiction") or any(c.get("canonical_id") in ["GOVERNING_LAW_JURISDICTION", "COURT_JURISDICTION"] for c in clauses))
+
         final_response = {
             "run_id": run_id,
             "workflow_type": workflow_type,
@@ -267,6 +274,30 @@ class MultiAgentOrchestrator:
             "total_duration_ms": total_duration_ms,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "routing": routing_info,
+            "document": {
+                "primary_type": doc_meta.get("primary_type") or doc_meta.get("document_type", "OTHER_LEGAL_DOCUMENT"),
+                "secondary_types": doc_meta.get("secondary_types", []),
+                "primary_domain": doc_meta.get("primary_domain") or detected_domains[0],
+                "secondary_domains": doc_meta.get("secondary_domains", []),
+                "governing_law": {
+                    "jurisdiction": l_ctx.get("governing_law", "Laws of India"),
+                    "country": l_ctx.get("country", "INDIA"),
+                    "state_or_region": l_ctx.get("state_or_region"),
+                    "source": l_ctx.get("governing_law_source", "Document Scan"),
+                    "confidence": l_ctx.get("jurisdiction_confidence", 0.9)
+                }
+            },
+            "referenced_documents": doc_meta.get("referenced_documents", []),
+            "dispute_resolution": {
+                "court_jurisdiction": l_ctx.get("court_jurisdiction"),
+                "venue": l_ctx.get("venue"),
+                "arbitration": "PRESENT" if has_arbitration else "NOT_DETECTED",
+                "mediation": "PRESENT" if l_ctx.get("mediation_forum") else "NOT_DETECTED"
+            },
+            "financial": {
+                "applicable": bool(risk_data.data.get("financial_applicable", True)) if risk_data else True,
+                "risk_score": (risk_data.data.get("dimension_breakdown", {}).get("Financial", 20)) if risk_data else 20
+            },
             "document_metadata": doc_res.data,
             "clauses": clauses,
             "risk_analysis": {

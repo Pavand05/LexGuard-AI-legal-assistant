@@ -4,6 +4,7 @@ Provides a single canonical legal context model for:
 - Governing Law
 - Incorporation Jurisdiction
 - Court Jurisdiction & Arbitral Seat
+- Venue & Mediation
 - Country and State/Province Resolution
 Ensures all agents (Compliance, Research, Citation, Negotiation, Privacy) share the same grounded legal framework.
 """
@@ -15,11 +16,13 @@ from dataclasses import dataclass, asdict
 @dataclass
 class DocumentLegalContext:
     country: str                          # "INDIA", "US", "UK", "EU", "SINGAPORE", "UNKNOWN"
-    state_or_region: Optional[str]        # e.g. "California", "Delaware", "Karnataka"
+    state_or_region: Optional[str]        # e.g. "New York", "California", "Delaware", "Karnataka"
     incorporation_jurisdiction: Optional[str] # e.g. "Delaware, USA" (Corporation formation)
-    governing_law: str                    # e.g. "Laws of the State of Delaware", "Laws of India"
-    court_jurisdiction: Optional[str]     # e.g. "Court of Chancery of the State of Delaware", "Bengaluru Courts"
+    governing_law: str                    # e.g. "Laws of the State of New York", "Laws of India"
+    court_jurisdiction: Optional[str]     # e.g. "Southern District of New York", "Bengaluru Courts"
+    venue: Optional[str]                  # e.g. "Southern District of New York", "Wilmington, Delaware"
     arbitration_seat: Optional[str]       # e.g. "San Francisco, California", "Bengaluru"
+    mediation_forum: Optional[str]        # e.g. "JAMS, New York"
     jurisdiction_confidence: float        # 0.0 to 1.0
     governing_law_source: str             # "Explicit Governing Law Clause", "Document Scan", "Inferred Default"
     jurisdiction_source: str              # "Explicit Court Jurisdiction Clause", "Document Scan"
@@ -32,7 +35,7 @@ class DocumentLegalContext:
 
     def is_us_jurisdiction(self) -> bool:
         return self.country == "US" or (self.state_or_region in [
-            "California", "Delaware", "New York", "Texas", "Washington", "Massachusetts", "Illinois", "Florida"
+            "California", "Delaware", "New York", "Texas", "Washington", "Massachusetts", "Illinois", "Florida", "Virginia", "New Jersey"
         ])
 
     def is_indian_jurisdiction(self) -> bool:
@@ -43,29 +46,29 @@ def resolve_document_legal_context(text: str) -> DocumentLegalContext:
     """
     Extracts and separates:
     1. Incorporation Jurisdiction (e.g. Delaware corporation)
-    2. Governing Law (e.g. Laws of California / Delaware)
-    3. Court Jurisdiction (e.g. Court of Chancery of the State of Delaware)
+    2. Governing Law (e.g. Laws of New York, Laws of California)
+    3. Court Jurisdiction & Venue (e.g. Federal courts in the Southern District of New York)
     4. Arbitration Seat (e.g. LCIA, London)
     """
     lower = text.lower()
     
-    # 1. Incorporation Jurisdiction Extraction
+    # 1. Incorporation Jurisdiction Extraction (e.g. 'a Delaware corporation', 'a New York partnership')
     incorp_match = re.search(
-        r"(?:a\s+([A-Za-z\s]+?)\s+corporation|incorporated\s+(?:in|under\s+the\s+laws\s+of)\s+(?:the\s+State\s+of\s+)?([A-Za-z\s,]+?)(?:\.|\n|;|,|\)|and))",
+        r"(?:a\s+([A-Za-z\s]+?)\s+(?:corporation|limited\s+liability\s+company|partnership|general\s+partnership)|incorporated\s+(?:in|under\s+the\s+laws\s+of)\s+(?:the\s+State\s+of\s+)?([A-Za-z\s,]+?)(?:\.|\n|;|,|\)|and))",
         text,
         re.IGNORECASE
     )
     incorp_jur = None
     if incorp_match:
         incorp_jur = (incorp_match.group(1) or incorp_match.group(2) or "").strip()[:40]
-        if incorp_jur and not any(k in incorp_jur.lower() for k in ["party", "company", "private", "limited"]):
-            incorp_jur = f"{incorp_jur}, USA" if any(s in incorp_jur.lower() for s in ["delaware", "california", "new york", "massachusetts"]) else incorp_jur
+        if incorp_jur and not any(k in incorp_jur.lower() for k in ["party", "company", "private", "limited", "partnership"]):
+            incorp_jur = f"{incorp_jur}, USA" if any(s in incorp_jur.lower() for s in ["delaware", "california", "new york", "massachusetts", "virginia", "new jersey"]) else incorp_jur
         else:
             incorp_jur = None
 
-    # 2. Explicit Governing Law Extraction (High Priority - handles 'construed and enforced in accordance with')
+    # 2. Explicit Governing Law Extraction (Highest Priority)
     gov_law_match = re.search(
-        r"(?:governed\s+by\s*(?:,\s*and\s+(?:construed|enforced|interpreted)[\w\s,]*in\s+accordance\s+with\s*,?\s*)?(?:the\s+)?(?:internal\s+)?laws\s+of\s+(?:the\s+State\s+of\s+)?)([A-Za-z\s,]+?)(?:\.|\n|;|,|without|\(|and\b)",
+        r"(?:governed\s+by\s*(?:,\s*and\s+(?:construed|enforced|interpreted)[\w\s,]*in\s+accordance\s+with\s*,?\s*)?|construed\s+and\s+controlled\s+by|controlled\s+by\s+the\s+laws\s+of|subject\s+to\s+the\s+laws\s+of|construed\s+under\s+the\s+laws\s+of|interpreted\s+in\s+accordance\s+with\s+the\s+laws\s+of)\s+(?:the\s+)?(?:internal\s+)?laws\s+of\s+(?:the\s+State\s+of\s+)?([A-Za-z\s,]+?)(?:\.|\n|;|,|without|\(|and\b)",
         text,
         re.IGNORECASE
     )
@@ -78,23 +81,36 @@ def resolve_document_legal_context(text: str) -> DocumentLegalContext:
             governing_law = f"Laws of {found_gov}"
             gov_source = "Explicit Governing Law Clause"
 
-    # 3. Court Jurisdiction Extraction (High Priority)
-    court_match = re.search(
-        r"(?:exclusive\s+jurisdiction\s+of\s+(?:the\s+)?(?:Court\s+of\s+Chancery|courts?|state\s+and\s+federal\s+courts?)\s+(?:of|in|located\s+in)\s+)([A-Za-z\s,]+?)(?:\.|\n|;|,|\(|and)",
+    # 3. Court Jurisdiction & Venue Extraction (Highest Priority)
+    venue = None
+    court_jur = None
+    court_source = "Document Scan"
+
+    court_venue_match = re.search(
+        r"(?:exclusive\s+jurisdiction\s+(?:and\s+venue\s+)?(?:in|of|to)\s+(?:the\s+)?(?:state\s+and\s+federal\s+|federal\s+|state\s+)?courts?\s+(?:sitting\s+in|located\s+in|in|at|of)\s+)([A-Za-z0-9\s,\.\(\)\-]+?)(?:\.|\n|;|,|\(|and\b|for\s+the\b|to\s+resolve\b)",
         text,
         re.IGNORECASE
     )
-    if not court_match:
+    if court_venue_match:
+        court_jur = court_venue_match.group(1).strip()[:60]
+        venue = court_jur
+        court_source = "Explicit Court Jurisdiction Clause"
+    else:
         court_match = re.search(
-            r"(?:exclusive\s+jurisdiction\s+(?:of|in|to)\s+(?:the\s+)?(?:state\s+and\s+federal\s+)?courts?\s+(?:in|at|of|located\s+in)\s+)([A-Za-z\s,]+?)(?:\.|\n|;|,|and)",
+            r"(?:exclusive\s+jurisdiction\s+of\s+(?:the\s+)?(?:Court\s+of\s+Chancery|courts?|state\s+and\s+federal\s+courts?)\s+(?:of|in|located\s+in|sitting\s+in)\s+)([A-Za-z0-9\s,\.\(\)\-]+?)(?:\.|\n|;|,|\(|and\b|for\s+the\b)",
             text,
             re.IGNORECASE
         )
-    court_jur = None
-    court_source = "Document Scan"
-    if court_match:
-        court_jur = court_match.group(1).strip()[:50]
-        court_source = "Explicit Court Jurisdiction Clause"
+        if not court_match:
+            court_match = re.search(
+                r"(?:exclusive\s+jurisdiction\s+(?:of|in|to)\s+(?:the\s+)?(?:state\s+and\s+federal\s+)?courts?\s+(?:in|at|of|located\s+in|sitting\s+in)\s+)([A-Za-z0-9\s,\.\(\)\-]+?)(?:\.|\n|;|,|and\b|for\s+the\b)",
+                text,
+                re.IGNORECASE
+            )
+        if court_match:
+            court_jur = court_match.group(1).strip()[:60]
+            venue = court_jur
+            court_source = "Explicit Court Jurisdiction Clause"
 
     # 4. Arbitration Seat Extraction
     arb_match = re.search(
@@ -107,26 +123,28 @@ def resolve_document_legal_context(text: str) -> DocumentLegalContext:
         arb_seat = arb_match.group(1).strip()[:30]
 
     # 5. Determine Canonical Country and State
-    # Prioritize Explicit Governing Law and Court Jurisdiction above party address mentions
+    # Explicit Governing Law and Court Jurisdiction take absolute precedence over preamble addresses
     explicit_gov = governing_law.lower()
     explicit_court = (court_jur or "").lower()
     
     country = "UNKNOWN"
     state_or_region = None
     
-    if "california" in explicit_gov or "california" in explicit_court:
+    if "new york" in explicit_gov or "new york" in explicit_court or "southern district of new york" in explicit_court:
         country = "US"
-        state_or_region = "California"
-        if "california" not in governing_law.lower() and gov_source != "Explicit Governing Law Clause":
-            governing_law = "Laws of California, USA"
-    elif "delaware" in explicit_gov or "delaware" in explicit_court:
+        state_or_region = "New York"
+        if "new york" not in governing_law.lower() and gov_source != "Explicit Governing Law Clause":
+            governing_law = "Laws of New York, USA"
+    elif "delaware" in explicit_gov or "delaware" in explicit_court or "chancery" in explicit_court:
         country = "US"
         state_or_region = "Delaware"
         if "delaware" not in governing_law.lower() and gov_source != "Explicit Governing Law Clause":
             governing_law = "Laws of Delaware, USA"
-    elif "new york" in explicit_gov or "new york" in explicit_court:
+    elif "california" in explicit_gov or "california" in explicit_court or "santa clara" in explicit_court:
         country = "US"
-        state_or_region = "New York"
+        state_or_region = "California"
+        if "california" not in governing_law.lower() and gov_source != "Explicit Governing Law Clause":
+            governing_law = "Laws of California, USA"
     elif any(k in explicit_gov or k in explicit_court for k in ["india", "bengaluru", "bangalore", "mumbai", "delhi", "karnataka", "tamil nadu", "maharashtra"]):
         country = "INDIA"
         state_or_region = "India"
@@ -143,15 +161,19 @@ def resolve_document_legal_context(text: str) -> DocumentLegalContext:
         if governing_law == "UNKNOWN":
             governing_law = "Laws of Singapore"
     else:
-        # Fallback to whole text scan if explicit clause was absent
-        if "california" in lower and ("california" in lower or "san jose" in lower or "san francisco" in lower or "santa clara" in lower):
+        # Fallback to whole text scan only if explicit clause was completely absent
+        if "new york" in lower and ("laws of new york" in lower or "courts of new york" in lower or "southern district" in lower):
             country = "US"
-            state_or_region = "California"
-            governing_law = "Laws of California, USA"
+            state_or_region = "New York"
+            governing_law = "Laws of New York, USA"
         elif "delaware" in lower and ("corporation" in lower or "laws of" in lower):
             country = "US"
             state_or_region = "Delaware"
             governing_law = "Laws of Delaware, USA"
+        elif "california" in lower and ("california" in lower or "san jose" in lower or "san francisco" in lower):
+            country = "US"
+            state_or_region = "California"
+            governing_law = "Laws of California, USA"
         elif any(k in lower for k in ["india", "bengaluru", "karnataka", "sub-registrar", "stamp duty"]):
             country = "INDIA"
             governing_law = "Laws of India"
@@ -164,7 +186,9 @@ def resolve_document_legal_context(text: str) -> DocumentLegalContext:
         incorporation_jurisdiction=incorp_jur,
         governing_law=governing_law,
         court_jurisdiction=court_jur,
+        venue=venue,
         arbitration_seat=arb_seat,
+        mediation_forum=None,
         jurisdiction_confidence=confidence,
         governing_law_source=gov_source,
         jurisdiction_source=court_source

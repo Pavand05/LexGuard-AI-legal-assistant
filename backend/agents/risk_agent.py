@@ -2,7 +2,7 @@
 Risk Assessment Agent (LexGuard-MA)
 Calculates multi-dimensional risk matrix based on actual clause content, asymmetry,
 enforceability uncertainty, financial exposure, and domain relevance.
-Aggregates risk severity across structured clauses and verified upstream findings.
+Hard-enforces strict 0-100 normalization on all risk dimensions and overall scores.
 """
 from typing import Dict, Any, List
 from .base_agent import BaseAgent, AgentResult, AgentFindingModel
@@ -22,8 +22,8 @@ class RiskAssessmentAgent(BaseAgent):
     def __init__(self):
         super().__init__(
             name="Risk Assessment Agent",
-            description="Calculates domain-calibrated 6-dimensional risk matrix across Legal, Financial, Compliance, Privacy, Operational, and IP dimensions.",
-            capabilities=["multi_dimensional_risk", "domain_weighting", "risk_calibration"]
+            description="Calculates domain-calibrated 6-dimensional risk matrix across Legal, Financial, Compliance, Privacy, Operational, and IP dimensions with strict 0-100 normalization.",
+            capabilities=["multi_dimensional_risk", "domain_weighting", "risk_calibration", "hard_score_normalization"]
         )
 
     def execute(self, context: Dict[str, Any]) -> AgentResult:
@@ -34,6 +34,18 @@ class RiskAssessmentAgent(BaseAgent):
         
         playbook: DomainPlaybook = resolve_domain_playbook(doc_type, detected_domains)
         applicable_dims = set(playbook.applicable_risk_dimensions)
+
+        # Financial provisions detection: If contract has financial terms, Financial is always applicable
+        financial_canonical_ids = {
+            "FEES_PAYMENT", "REVENUE_SHARE", "FINANCIAL_AUDIT", "TAXES_FEES",
+            "CONSIDERATION_PAYMENT", "COMPENSATION_BENEFITS", "SEVERANCE_WAIVER"
+        }
+        has_financial_provisions = any(
+            c.get("canonical_id") in financial_canonical_ids or c.get("dimension") == "Financial"
+            for c in clauses
+        )
+        if has_financial_provisions:
+            applicable_dims.add("Financial")
 
         dim_stats = {
             dim: {"critical": 0, "high": 0, "medium": 0, "low": 0, "total": 0}
@@ -67,26 +79,26 @@ class RiskAssessmentAgent(BaseAgent):
 
         dimension_breakdown = {}
         dimension_status = {}
-        weighted_overall = 0.0
-        active_weight_sum = 0.0
-        
         applicable_weighted = 0.0
         applicable_weight_sum = 0.0
+        
         for dim, counts in dim_stats.items():
             if dim in applicable_dims:
                 # Dimension is applicable
                 if counts["critical"] > 0 or counts["high"] > 0 or counts["medium"] > 0:
                     dimension_status[dim] = "APPLICABLE"
-                    score = 20 + (counts["critical"] * 35) + (counts["high"] * 25) + (counts["medium"] * 10) + (counts["low"] * 2)
-                    score = max(10, min(100, score))
-                    w = self.BASE_DIMENSION_WEIGHTS.get(dim, 0.15)
-                    dimension_breakdown[dim] = score
-                    applicable_weighted += score * w
-                    applicable_weight_sum += w
+                    score = 20 + (counts["critical"] * 35) + (counts["high"] * 25) + (counts["medium"] * 10) + min(10, counts["low"] * 2)
                 else:
-                    dimension_status[dim] = "INSUFFICIENT_EVIDENCE"
-                    score = 15 + (counts["low"] * 2)
-                    dimension_breakdown[dim] = score
+                    dimension_status[dim] = "APPLICABLE" if (dim == "Financial" and has_financial_provisions) else "INSUFFICIENT_EVIDENCE"
+                    score = 15 + min(10, counts["low"] * 2)
+                    
+                # HARD ENFORCE: Clamp dimension score strictly between 0 and 100
+                score = max(0, min(100, int(score)))
+                dimension_breakdown[dim] = score
+                
+                w = self.BASE_DIMENSION_WEIGHTS.get(dim, 0.15)
+                applicable_weighted += score * w
+                applicable_weight_sum += w
             else:
                 dimension_status[dim] = "NOT_APPLICABLE"
                 dimension_breakdown[dim] = 0
@@ -96,6 +108,9 @@ class RiskAssessmentAgent(BaseAgent):
             overall_risk_score = int(round(applicable_weighted / applicable_weight_sum))
         else:
             overall_risk_score = 15
+
+        # HARD ENFORCE: Clamp overall score strictly between 0 and 100
+        overall_risk_score = max(0, min(100, overall_risk_score))
 
         # Risk tier classification
         if overall_risk_score >= 65:
@@ -141,6 +156,7 @@ class RiskAssessmentAgent(BaseAgent):
                 "overall_risk_score": overall_risk_score,
                 "overall_tier": overall_tier,
                 "risk_label": risk_label,
+                "financial_applicable": has_financial_provisions,
                 "applicable_dimensions": list(applicable_dims),
                 "dimension_breakdown": dimension_breakdown,
                 "dimension_status": dimension_status,

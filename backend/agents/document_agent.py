@@ -1,16 +1,47 @@
 """
 Document Intelligence Agent (LexGuard-MA)
-Performs open-set document classification, domain detection with strict semantic thresholding,
-party mapping, and canonical DocumentLegalContext resolution (Country, Governing Law, Court Jurisdiction, Arbitration Seat).
+Performs open-set document classification, primary vs referenced agreement resolution,
+clean multi-domain detection, party mapping, and canonical DocumentLegalContext resolution.
 """
 import re
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from .base_agent import BaseAgent, AgentResult, AgentFindingModel
 from agent_tools.document_tools import extract_entities_and_dates
 from .legal_context import resolve_document_legal_context, DocumentLegalContext
 
 
 DOCUMENT_TAXONOMY = [
+    # --- SaaS, Cloud & Technology Licensing ---
+    {
+        "type": "SAAS_AGREEMENT",
+        "display": "Software-as-a-Service (SaaS) Agreement / Cloud SLA",
+        "domain": "IP_SOFTWARE_TECH",
+        "primary_keywords": [
+            "software as a service agreement", "software as a service", "saas agreement",
+            "cloud services agreement", "master subscription agreement", "saas terms of service",
+            "hosted services agreement"
+        ],
+        "supporting_keywords": [
+            "subscriber", "cloud service", "uptime", "sla", "service credits", "revenue share",
+            "subscription fees", "platform availability", "cloud hosting", "api access", "customer data"
+        ],
+        "min_score": 2
+    },
+    {
+        "type": "SOFTWARE_LICENSE",
+        "display": "Software License Agreement / EULA",
+        "domain": "IP_SOFTWARE_TECH",
+        "primary_keywords": [
+            "software license agreement", "end user license agreement", "eula",
+            "software licensing agreement", "proprietary software license"
+        ],
+        "supporting_keywords": [
+            "licensor", "licensee", "licensed software", "grant of license", "intellectual property",
+            "derivative works", "source code", "object code"
+        ],
+        "min_score": 2
+    },
+
     # --- Real Estate & Conveyancing ---
     {
         "type": "LAND_SALE_DEED",
@@ -91,29 +122,16 @@ DOCUMENT_TAXONOMY = [
         "min_score": 2
     },
 
-    # --- Confidentiality & Intellectual Property ---
+    # --- Confidentiality & Non-Disclosure ---
     {
         "type": "NDA",
         "display": "Non-Disclosure Agreement (NDA) / Secrecy Deed",
         "domain": "CONFIDENTIALITY_NDA",
-        "primary_keywords": ["non-disclosure agreement", "mutual non-disclosure", "confidentiality agreement", "proprietary information agreement", "unilateral nda"],
-        "supporting_keywords": ["disclosing party", "receiving party", "confidential information", "trade secrets", "non-use", "return of materials", "injunctive relief"],
-        "min_score": 2
-    },
-    {
-        "type": "SOFTWARE_LICENSE",
-        "display": "Software License Agreement / EULA",
-        "domain": "IP_SOFTWARE_TECH",
-        "primary_keywords": ["software license agreement", "end user license agreement", "eula", "software licensing agreement"],
-        "supporting_keywords": ["licensor", "licensee", "licensed software", "grant of license", "intellectual property", "derivative works", "source code"],
-        "min_score": 2
-    },
-    {
-        "type": "SAAS_AGREEMENT",
-        "display": "Software-as-a-Service (SaaS) Agreement / Cloud SLA",
-        "domain": "IP_SOFTWARE_TECH",
-        "primary_keywords": ["saas agreement", "cloud services agreement", "master subscription agreement", "software as a service"],
-        "supporting_keywords": ["subscriber", "cloud service", "uptime", "sla", "service credits", "data backup", "subscription fees"],
+        "primary_keywords": [
+            "non-disclosure agreement", "mutual non-disclosure", "confidentiality agreement",
+            "proprietary information agreement", "unilateral nda", "mutual non-disclosure and confidentiality agreement"
+        ],
+        "supporting_keywords": ["disclosing party", "receiving party", "confidential information", "trade secrets", "non-use", "return of materials", "injunctive relief", "evaluation material", "potential transaction"],
         "min_score": 2
     },
 
@@ -139,7 +157,7 @@ DOCUMENT_TAXONOMY = [
         "display": "Terms of Service / Terms & Conditions",
         "domain": "DATA_PRIVACY",
         "primary_keywords": ["terms of service", "terms and conditions", "terms of use", "user agreement"],
-        "supporting_keywords": ["user account", "prohibited conduct", "disclaimer of warranties", "limitation of liability", "governing law"],
+        "supporting_keywords": ["acceptable use", "account registration", "user conduct", "prohibited activities", "termination of access"],
         "min_score": 2
     },
 
@@ -214,7 +232,7 @@ LEGAL_DOMAINS_CRITERIA = {
         r"\b(confidential\s+information|non[- ]?disclosure|trade\s+secrets?|receiving\s+party|disclosing\s+party|proprietary\s+information)\b"
     ],
     "IP_SOFTWARE_TECH": [
-        r"\b(software\s+license|saas\s+agreement|source\s+code|sla\s+uptime|works\s+made\s+for\s+hire|patent\s+assignment|intellectual\s+property\s+rights)\b"
+        r"\b(software\s+as\s+a\s+service|saas|cloud\s+services?|software\s+license|source\s+code|sla\s+uptime|uptime\s+percentage|service\s+credits|revenue\s+share|subscriber\s+data|hosted\s+services?)\b"
     ],
     "DATA_PRIVACY": [
         r"\b(personal\s+data|data\s+processing\s+agreement|data\s+fiduciary|data\s+processor|gdpr|dpdp\s+act|privacy\s+policy|breach\s+notification)\b"
@@ -232,8 +250,8 @@ class DocumentIntelligenceAgent(BaseAgent):
     def __init__(self):
         super().__init__(
             name="Document Intelligence Agent",
-            description="Performs open-set document classification, clean domain detection, party mapping, and canonical DocumentLegalContext resolution.",
-            capabilities=["metadata_extraction", "open_set_classification", "domain_detection", "party_mapping", "legal_context_resolution"]
+            description="Performs open-set document classification, primary vs referenced agreement extraction, multi-domain detection, and DocumentLegalContext resolution.",
+            capabilities=["metadata_extraction", "open_set_classification", "referenced_documents_extraction", "domain_detection", "party_mapping", "legal_context_resolution"]
         )
 
     def execute(self, context: Dict[str, Any]) -> AgentResult:
@@ -243,11 +261,32 @@ class DocumentIntelligenceAgent(BaseAgent):
         
         extracted = extract_entities_and_dates(text)
         lower_text = text.lower()
+        header_text = lower_text[:1200]  # First ~1200 chars containing title, recital & preamble
         
         # 1. Canonical Legal Context Resolution (Governing Law vs Incorporation vs Jurisdiction)
         legal_context: DocumentLegalContext = resolve_document_legal_context(text)
 
-        # 2. Strict Semantic Domain Detection
+        # 2. Extract Referenced / Incorporated Agreements
+        referenced_documents: List[Dict[str, Any]] = []
+        ref_patterns = [
+            (r"(?:entered\s+into|parties\s+have\s+entered\s+into|subject\s+to\s+the\s+terms\s+of|incorporated\s+by\s+reference|prior\s+to\s+this\s+Agreement,\s+the\s+Parties\s+executed)\s+(?:a|that\s+certain)?\s*([A-Za-z0-9\s,\-]{4,60}?(?:Non-Disclosure\s+Agreement|Confidentiality\s+Agreement|Master\s+Agreement|NDA|DPA|SLA))\b", "INCORPORATED"),
+            (r"(?:pursuant\s+to|governed\s+by\s+the\s+terms\s+of)\s+(?:a|that\s+certain)?\s*([A-Za-z0-9\s,\-]{4,60}?(?:Non-Disclosure\s+Agreement|Confidentiality\s+Agreement|Statement\s+of\s+Work|Schedule\s+[A-Z\d]+))\b", "REFERENCED")
+        ]
+        seen_refs = set()
+        for pat, status in ref_patterns:
+            for m in re.finditer(pat, text, re.IGNORECASE):
+                ref_name = m.group(1).strip()
+                ref_type = "NDA" if any(k in ref_name.lower() for k in ["non-disclosure", "confidentiality", "nda"]) else "OTHER_AGREEMENT"
+                if ref_name.lower() not in seen_refs:
+                    seen_refs.add(ref_name.lower())
+                    referenced_documents.append({
+                        "name": ref_name,
+                        "type": ref_type,
+                        "status": status,
+                        "evidence": m.group(0)[:140]
+                    })
+
+        # 3. Strict Semantic Domain Detection
         detected_domains: List[str] = []
         for domain_name, pattern_list in LEGAL_DOMAINS_CRITERIA.items():
             hits = 0
@@ -261,41 +300,59 @@ class DocumentIntelligenceAgent(BaseAgent):
         if not detected_domains:
             detected_domains = ["GENERAL_COMMERCIAL"]
 
-        # 3. Open-Set Document Taxonomy Classification
+        # 4. Open-Set Document Taxonomy Classification with Title & Header Hierarchy
         best_type = "OTHER_LEGAL_DOCUMENT"
         best_display = "Other Legal / Commercial Document"
         best_domain = detected_domains[0]
         highest_score = 0
         matched_evidence: List[str] = []
+        secondary_types: List[str] = []
 
         for profile in DOCUMENT_TAXONOMY:
             score = 0
             evidence = []
             
+            # Level 1: Explicit Document Title / Header Match (First 1200 characters) - Highest Priority
             for kw in profile["primary_keywords"]:
-                if re.search(rf"\b{re.escape(kw)}\b", lower_text):
+                if re.search(rf"\b{re.escape(kw)}\b", header_text):
+                    score += 25  # Massive weight for title/preamble match
+                    evidence.append(f"Title / Header match: '{kw}'")
+                elif re.search(rf"\b{re.escape(kw)}\b", lower_text):
                     score += 4
-                    evidence.append(f"Header match: '{kw}'")
+                    evidence.append(f"Body keyword match: '{kw}'")
                     
             for kw in profile["supporting_keywords"]:
                 if re.search(rf"\b{re.escape(kw)}\b", lower_text):
                     score += 1
                     evidence.append(f"Contextual: '{kw}'")
                     
-            if score >= profile["min_score"] and score > highest_score:
-                highest_score = score
-                best_type = profile["type"]
-                best_display = profile["display"]
-                best_domain = profile["domain"]
-                matched_evidence = evidence[:8]
+            # Demote NDA score if NDA is only a referenced agreement inside a non-NDA title
+            if profile["type"] == "NDA" and referenced_documents:
+                # If title had SaaS, Software License, Master Agreement, or Employment, demote NDA body score
+                if any(k in header_text for k in ["software as a service", "saas", "software license", "employment agreement", "commercial lease"]):
+                    score = min(score, 3)
+
+            if score >= profile["min_score"]:
+                if score > highest_score:
+                    if highest_score >= 4 and best_type != "OTHER_LEGAL_DOCUMENT" and best_type not in secondary_types:
+                        secondary_types.append(best_type)
+                    highest_score = score
+                    best_type = profile["type"]
+                    best_display = profile["display"]
+                    best_domain = profile["domain"]
+                    matched_evidence = evidence[:8]
+                elif score >= 4 and profile["type"] != best_type and profile["type"] not in secondary_types:
+                    secondary_types.append(profile["type"])
 
         # Calibrate Confidence
-        if highest_score >= 8:
+        if highest_score >= 20:
             confidence = 0.98
+        elif highest_score >= 8:
+            confidence = 0.94
         elif highest_score >= 5:
-            confidence = 0.92
+            confidence = 0.88
         elif highest_score >= 3:
-            confidence = 0.82
+            confidence = 0.78
         elif highest_score >= 2:
             confidence = 0.65
         else:
@@ -320,16 +377,20 @@ class DocumentIntelligenceAgent(BaseAgent):
         
         metadata = {
             "document_type": best_type,
+            "primary_type": best_type,
+            "secondary_types": secondary_types,
             "document_type_display": best_display,
             "detected_domains": unique_domains,
             "primary_domain": best_domain,
+            "secondary_domains": unique_domains[1:] if len(unique_domains) > 1 else [],
+            "referenced_documents": referenced_documents,
             "filename": filename,
             "total_pages": len(page_texts),
             "word_count": len(text.split()),
             "parties": extracted["parties"],
             "dates": extracted["dates"],
             "monetary_values": extracted["monetary_values"],
-            "legal_context": legal_context.model_dump(),
+            "legal_context": legal_context.to_dict(),
             "applicable_law": legal_context.governing_law,
             "court_jurisdiction": legal_context.court_jurisdiction or "Competent Courts",
             "arbitration_seat": legal_context.arbitration_seat,
@@ -353,7 +414,7 @@ class DocumentIntelligenceAgent(BaseAgent):
             clause_text=f"Classified: {best_display} ({best_type}) | Governing Law: {legal_context.governing_law} | Domains: {', '.join(unique_domains)}",
             page_number=1,
             evidence="; ".join(matched_evidence[:5]),
-            claim=f"Document identified under {best_domain} legal domain.",
+            claim=f"Document identified as {best_display} under {best_domain} legal domain.",
             reason=f"Open-set taxonomy analysis matched {len(matched_evidence)} indicator(s). Governing law: {legal_context.governing_law}.",
             recommendation="Review contracting entity capacity and ensure all schedules match official records.",
             source_type="DOCUMENT_TEXT",
