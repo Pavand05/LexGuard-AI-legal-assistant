@@ -1,321 +1,354 @@
 """
-Clause Intelligence Agent
-Performs semantic & deterministic clause extraction across commercial, property, and corporate legal categories.
-Includes dedicated real estate / land conveyancing categories (Title, Encumbrance, Mortgage, Possession, Consideration).
+Clause Intelligence Agent (LexGuard-MA)
+Performs domain-weighted, multi-factor semantic clause classification across canonical categories.
+Combines:
+1. Clause Heading Evidence
+2. Active Domain / Document-Type Affinity
+3. Positive Semantic Keyword Density
+4. Contextual Negative Indicators (e.g. equipment possession vs. real estate possession)
+5. Canonical Taxonomy Mapping
 """
 import re
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from .base_agent import BaseAgent, AgentResult, AgentFindingModel
+from .clause_taxonomy import (
+    CANONICAL_CLAUSE_DEFINITIONS,
+    normalize_to_canonical_id
+)
+from .playbooks import resolve_domain_playbook, DomainPlaybook
 
 
 class ClauseIntelligenceAgent(BaseAgent):
-    RULES = [
-        # --- Property & Real Estate Conveyance Categories (High Priority) ---
-        {
-            "type": "Encumbrance & Mortgage",
-            "category": "Encumbrance & Mortgage",
-            "risk": "high",
-            "dimension": "Financial",
-            "keywords": ["mortgage", "mortgaged", "mortgagee", "mortgagor", "hypothecation", "encumbrance", "encumbrances", "free from all encumbrances", "charge", "charges", "lien", "court attachment", "lis pendens", "title deeds deposited"],
-            "pattern": r"\b(mortgage|mortgaged|mortgagee|mortgagor|hypothecation|encumbrance|encumbrances|free\s+from\s+all\s+encumbrances|charges?|liens?|court\s+attachment|lis\s+pendens|title\s+deeds\s+deposited)\b"
+    # Candidate classification rules with positive regex patterns and negative context guards
+    CANDIDATE_PATTERNS: Dict[str, Dict[str, Any]] = {
+        # --- Employment ---
+        "POSITION_DUTIES": {
+            "patterns": [
+                r"\b(position\s+(?:and|&)\s+duties|title\s+(?:and|&)\s+responsibilities|duties\s+(?:and|&)\s+position|reporting\s+to|scope\s+of\s+employment|job\s+title|appointed\s+as|responsibilities\s+of\s+the\s+executive)\b"
+            ],
+            "negative_patterns": [r"\b(schedule\s+of\s+property|survey\s+no)\b"],
+            "headings": ["position", "duties", "responsibilities", "employment", "appointment", "title"]
         },
-        {
-            "type": "Title & Ownership",
-            "category": "Title & Ownership",
-            "risk": "high",
-            "dimension": "Legal",
-            "keywords": ["absolute owner", "marketable title", "clear and marketable title", "chain of title", "hereditary", "ownership rights", "sole and absolute owner"],
-            "pattern": r"\b(absolute\s+owner|marketable\s+title|clear\s+and\s+marketable\s+title|chain\s+of\s+title|hereditary|derived\s+title|ownership\s+rights|sole\s+and\s+absolute\s+owner)\b"
+        "COMPENSATION_BENEFITS": {
+            "patterns": [
+                r"\b(compensation|base\s+salary|annual\s+ctc|annual\s+salary|bonus\s+plan|equity\s+incentive|stock\s+options?|vesting\s+schedule|fringe\s+benefits|reimbursement\s+of\s+expenses|severance\s+benefit|unvested\s+options?\s+shall\s+be\s+forfeited|clawback)\b"
+            ],
+            "negative_patterns": [r"\b(sale\s+consideration|advance\s+token|earnest\s+money|sub-registrar)\b"],
+            "headings": ["compensation", "salary", "remuneration", "benefits", "equity", "incentives", "bonus"]
         },
-        {
-            "type": "Possession",
-            "category": "Possession",
-            "risk": "medium",
-            "dimension": "Operational",
-            "keywords": ["possession", "vacant possession", "physical possession", "peaceful possession", "hand over possession", "delivery of possession"],
-            "pattern": r"\b(vacant\s+possession|physical\s+possession|peaceful\s+possession|hand\s+over\s+possession|delivery\s+of\s+possession|delivered\s+vacant\s+possession|\bpossession\b)\b"
+        "EMPLOYMENT_TERM": {
+            "patterns": [
+                r"\b(employment\s+period|period\s+of\s+employment|term\s+of\s+employment|employment\s+term|duration\s+of\s+employment|at-will\s+employment)\b"
+            ],
+            "negative_patterns": [r"\b(lease\s+term|demised\s+premises|agricultural\s+land|survey\s+no)\b"],
+            "headings": ["term", "employment period", "duration", "tenure"]
         },
-        {
-            "type": "Consideration & Payment",
-            "category": "Consideration & Payment",
-            "risk": "medium",
-            "dimension": "Financial",
-            "keywords": ["sale consideration", "consideration amount", "advance amount", "advance sum", "balance consideration", "earnest money", "full and final settlement", "payment schedule", "cheque", "neft", "rtgs"],
-            "pattern": r"\b(sale\s+consideration|consideration\s+amount|advance\s+amount|advance\s+sum|advance\s+token|balance\s+consideration|earnest\s+money|full\s+and\s+final\s+settlement|payment\s+schedule|demand\s+draft|cheque|rtgs|neft)\b"
+        "NON_COMPETE": {
+            "patterns": [
+                r"\b(non[- ]?compete|non[- ]?competition|restrictive\s+covenant|restraint\s+of\s+trade|covenant\s+not\s+to\s+compete|competing\s+business|shall\s+not\s+engage\s+in\s+any\s+competing)\b"
+            ],
+            "negative_patterns": [],
+            "headings": ["non-compete", "restrictive covenants", "competition", "restraint"]
         },
-        {
-            "type": "Registration & Stamp Duty",
-            "category": "Registration & Stamp Duty",
-            "risk": "medium",
-            "dimension": "Compliance",
-            "keywords": ["sub-registrar", "stamp duty", "registration charges", "registration fee", "stamp paper", "registration act"],
-            "pattern": r"\b(sub[- ]registrar|stamp\s+duty|registration\s+charges|registration\s+fee|stamp\s+paper|duly\s+registered|registration\s+act)\b"
+        "NON_SOLICITATION": {
+            "patterns": [
+                r"\b(non[- ]?solicit|non[- ]?solicitation|solicit\s+employees|solicit\s+customers|induce\s+any\s+employee|solicitation\s+of\s+clients)\b"
+            ],
+            "negative_patterns": [],
+            "headings": ["non-solicitation", "solicitation", "no-poach"]
         },
-        {
-            "type": "Taxes & Outgoings",
-            "category": "Taxes & Outgoings",
-            "risk": "low",
-            "dimension": "Financial",
-            "keywords": ["property tax", "betterment charges", "municipal taxes", "electricity dues", "water cess", "statutory dues"],
-            "pattern": r"\b(property\s+tax|betterment\s+charges|municipal\s+taxes|electricity\s+(?:dues|charges)|water\s+cess|statutory\s+dues|all\s+taxes\s+and\s+outgoings)\b"
+        "SEVERANCE_WAIVER": {
+            "patterns": [
+                r"\b(release\s+of\s+claims|general\s+release|waiver\s+and\s+release|severance\s+payment|releases\s+and\s+discharges|claims,\s+charges,\s+demands,\s+and\s+liens|waiver\s+of\s+liability)\b"
+            ],
+            "negative_patterns": [r"\b(mortgaged\s+with|sub-registrar|survey\s+no)\b"],
+            "headings": ["release", "waiver", "severance", "separation", "discharge"]
         },
-        {
-            "type": "Property Description & Schedule",
-            "category": "Property Description & Schedule",
-            "risk": "low",
-            "dimension": "Legal",
-            "keywords": ["schedule of property", "schedule property", "survey no", "khata no", "site no", "bounded on", "square feet", "acres", "guntas"],
-            "pattern": r"\b(schedule\s+of\s+property|schedule\s+property|survey\s+no|khata\s+no|site\s+no|bounded\s+on\s+the\s+east|bounded\s+on|measuring\s+east\s+to\s+west|square\s+feet|acres|guntas)\b"
-        },
-        {
-            "type": "Lease Term & Renewal",
-            "category": "Lease Term & Renewal",
-            "risk": "medium",
-            "dimension": "Legal",
-            "keywords": ["lease term", "term of lease", "fixed term of", "renewal", "option to renew", "expire", "tenure"],
-            "pattern": r"\b(lease\s+term|term\s+of\s+lease|fixed\s+term\s+of|unilateral\s+right\s+to\s+renew|renewal|expire\s+in)\b"
-        },
-        {
-            "type": "Assignment & Sublease",
-            "category": "Assignment & Sublease",
-            "risk": "high",
-            "dimension": "Legal",
-            "keywords": ["sublease", "sublet", "sub-lease", "assigning or subleasing", "assignment of lease"],
-            "pattern": r"\b(sublease|sublet|sub-lease|assigning\s+or\s+subleasing|subletting|assignment\s+of\s+lease)\b"
-        },
-        {
-            "type": "Permitted Use & Restrictions",
-            "category": "Permitted Use & Restrictions",
-            "risk": "medium",
-            "dimension": "Operational",
-            "keywords": ["permitted use", "demised land shall be used", "solely for", "no permanent concrete structures", "permanent multi-story"],
-            "pattern": r"\b(permitted\s+use|used\s+solely\s+for|no\s+permanent\s+concrete\s+structures|erect\s+permanent|structures?)\b"
-        },
-        {
-            "type": "Default & Forfeiture",
-            "category": "Default & Forfeiture",
-            "risk": "high",
-            "dimension": "Legal",
-            "keywords": ["forfeiture", "forfeited", "earnest money forfeited", "specific performance", "time is of the essence"],
-            "pattern": r"\b(forfeit|forfeiture|forfeited|earnest\s+money\s+forfeited|breach\s+of\s+contract|specific\s+performance|time\s+is\s+the\s+essence)\b"
-        },
-        {
-            "type": "Sale Restrictions",
-            "category": "Sale Restrictions",
-            "risk": "high",
-            "dimension": "Legal",
-            "keywords": ["restriction on sale", "prohibited from selling", "prior consent", "ptcl", "land grant", "clearance certificate"],
-            "pattern": r"\b(restriction\s+on\s+sale|prohibited\s+from\s+selling|prior\s+consent\s+of\s+government|ptcl|land\s+grant|clearance\s+certificate|no\s+objection\s+certificate)\b"
+        "COOPERATION_HANDOVER": {
+            "patterns": [
+                r"\b(executive\s+cooperation|cooperation\s+clause|return\s+of\s+company\s+property|property\s+in\s+(?:executive|employee)'s\s+possession|return\s+all\s+(?:materials|documents|laptops|keys))\b"
+            ],
+            "negative_patterns": [r"\b(demised\s+premises|vacant\s+possession\s+of\s+the\s+property|survey\s+no)\b"],
+            "headings": ["cooperation", "return of property", "company property", "handover"]
         },
 
-        # --- Commercial & General Contract Categories ---
-        {
-            "type": "Indemnity & Liability",
-            "category": "Indemnity & Liability",
-            "risk": "high",
-            "dimension": "Financial",
-            "keywords": ["indemnity", "indemnify", "indemnification", "hold harmless", "unlimited liability", "limitation of liability", "consequential damages", "liquidated damages"],
-            "pattern": r"\b(indemnity|indemnify|indemnification|hold\s+harmless|unlimited\s+liability|limitation\s+of\s+liability|consequential\s+damages|liquidated\s+damages)\b"
+        # --- Property & Real Estate ---
+        "PROPERTY_DESCRIPTION": {
+            "patterns": [
+                r"\b(schedule\s+of\s+property|schedule\s+property|survey\s+no|khata\s+no|site\s+no|bounded\s+on\s+the\s+east|measuring\s+east\s+to\s+west|acres|guntas|square\s+feet)\b"
+            ],
+            "negative_patterns": [],
+            "headings": ["schedule", "description of property", "property details", "demised land"]
         },
-        {
-            "type": "Non-Compete & Restraint",
-            "category": "Non-Compete & Restraint",
-            "risk": "high",
-            "dimension": "Legal",
-            "keywords": ["non-compete", "non-competition", "restrictive covenant", "restraint of trade"],
-            "pattern": r"\b(non[- ]?compete|non[- ]?competition|restrictive\s+covenant|restraint\s+of\s+trade|covenant\s+not\s+to\s+compete)\b"
+        "TITLE_OWNERSHIP": {
+            "patterns": [
+                r"\b(absolute\s+owner|marketable\s+title|clear\s+and\s+marketable\s+title|chain\s+of\s+title|hereditary\s+ownership|derived\s+title|sole\s+and\s+absolute\s+owner)\b"
+            ],
+            "negative_patterns": [],
+            "headings": ["title", "ownership", "title history", "vendor's title"]
         },
-        {
-            "type": "Non-Solicitation",
-            "category": "Non-Solicitation",
-            "risk": "medium",
-            "dimension": "Operational",
-            "keywords": ["non-solicit", "non-solicitation", "solicit employees", "solicit customers"],
-            "pattern": r"\b(non[- ]?solicit|non[- ]?solicitation|solicit\s+employees|solicit\s+customers)\b"
+        "POSSESSION_REAL_ESTATE": {
+            "patterns": [
+                r"\b(vacant\s+possession\s+of\s+(?:the\s+)?(?:property|demised|land|premises)|physical\s+vacant\s+possession|hand\s+over\s+physical\s+possession|delivery\s+of\s+vacant\s+possession)\b"
+            ],
+            "negative_patterns": [r"\b(in\s+(?:executive|employee)'s\s+possession|company\s+property|laptop)\b"],
+            "headings": ["possession", "delivery of possession", "vacant possession"]
         },
-        {
-            "type": "Termination",
-            "category": "Termination",
-            "risk": "medium",
-            "dimension": "Operational",
-            "keywords": ["termination", "terminate", "cancellation", "convenience termination", "material breach"],
-            "pattern": r"\b(termination|terminate|terminates|cancellation\s+of\s+agreement|convenience\s+termination|material\s+breach)\b"
+        "ENCUMBRANCE_MORTGAGE": {
+            "patterns": [
+                r"\b(mortgage\s+deed|property\s+was\s+(?:previously\s+)?mortgaged|free\s+from\s+all\s+encumbrances|mortgagee|mortgagor|hypothecation\s+of\s+property|court\s+attachment\s+in\s+os|lis\s+pendens|title\s+deeds\s+deposited)\b"
+            ],
+            "negative_patterns": [r"\b(claims,\s+charges,\s+demands,\s+and\s+liens\s+against\s+employer|eeoc\s+charges)\b"],
+            "headings": ["encumbrance", "mortgage", "charge on property", "court attachment"]
         },
-        {
-            "type": "Confidentiality",
-            "category": "Confidentiality",
-            "risk": "medium",
-            "dimension": "Privacy",
-            "keywords": ["confidential", "confidentiality", "non-disclosure", "proprietary information", "trade secret"],
-            "pattern": r"\b(confidential|confidentiality|non[- ]?disclosure|proprietary\s+information|trade\s+secret)\b"
+        "CONSIDERATION_PAYMENT": {
+            "patterns": [
+                r"\b(sale\s+consideration|consideration\s+amount|advance\s+amount|advance\s+sum|advance\s+token|balance\s+consideration|earnest\s+money|full\s+and\s+final\s+settlement\s+of\s+sale|sub-registrar\s+payment)\b"
+            ],
+            "negative_patterns": [r"\b(annual\s+ctc|base\s+salary|monthly\s+remuneration)\b"],
+            "headings": ["consideration", "sale price", "payment terms", "earnest money"]
         },
-        {
-            "type": "Dispute Resolution & Arbitration",
-            "category": "Dispute Resolution & Arbitration",
-            "risk": "medium",
-            "dimension": "Legal",
-            "keywords": ["arbitration", "mediation", "dispute resolution", "arbitral tribunal", "arbitrator", "seat of arbitration"],
-            "pattern": r"\b(arbitration|mediation|dispute\s+resolution|dispute\s+settlement|arbitral\s+tribunal|seat\s+of\s+arbitration|arbitrator)\b"
+        "LEASE_TERM_RENEWAL": {
+            "patterns": [
+                r"\b(lease\s+shall\s+be\s+for\s+a\s+(?:fixed\s+)?term|lease\s+term|term\s+of\s+lease|ground\s+lease\s+period|unilateral\s+right\s+to\s+renew\s+the\s+lease)\b"
+            ],
+            "negative_patterns": [r"\b(employment\s+agreement|executive\s+employment|annual\s+ctc)\b"],
+            "headings": ["lease term", "tenancy period", "lease renewal"]
         },
-        {
-            "type": "Governing Law & Jurisdiction",
-            "category": "Governing Law & Jurisdiction",
-            "risk": "low",
-            "dimension": "Legal",
-            "keywords": ["governing law", "exclusive jurisdiction", "applicable law", "choice of law", "courts at"],
-            "pattern": r"\b(governing\s+law|jurisdiction|applicable\s+law|exclusive\s+jurisdiction|choice\s+of\s+law|courts\s+at)\b"
+        "SUBLEASE_ASSIGNMENT": {
+            "patterns": [
+                r"\b(sublease|sublet|sub-lease|assigning\s+or\s+subleasing|subletting|assignment\s+of\s+lease)\b"
+            ],
+            "negative_patterns": [],
+            "headings": ["sublease", "subletting", "assignment"]
         },
-        {
-            "type": "Intellectual Property",
-            "category": "Intellectual Property",
-            "risk": "medium",
-            "dimension": "IP",
-            "keywords": ["intellectual property", "ip rights", "work for hire", "patent", "copyright", "trademark"],
-            "pattern": r"\b(intellectual\s+property|\bip\s+rights\b|work\s+for\s+hire|patent|copyright|trademark|moral\s+rights|assignment\s+of\s+ip)\b"
+        "PERMITTED_USE_RESTRICTIONS": {
+            "patterns": [
+                r"\b(permitted\s+use|used\s+solely\s+for|no\s+permanent\s+concrete\s+structures|erect\s+permanent|structures?)\b"
+            ],
+            "negative_patterns": [],
+            "headings": ["permitted use", "use of premises", "construction"]
         },
-        {
-            "type": "Data Protection & Privacy",
-            "category": "Data Protection & Privacy",
-            "risk": "high",
-            "dimension": "Privacy",
-            "keywords": ["personal data", "data protection", "dpdp", "gdpr", "data fiduciary", "data breach"],
-            "pattern": r"\b(personal\s+data|data\s+protection|dpdp|gdpr|data\s+fiduciary|data\s+principal|data\s+processor|security\s+safeguards|data\s+breach)\b"
+        "DEFAULT_FORFEITURE": {
+            "patterns": [
+                r"\b(earnest\s+money\s+(?:shall\s+be\s+)?forfeited|forfeiture\s+of\s+earnest\s+money|forfeiture\s+of\s+security\s+deposit|specific\s+performance\s+of\s+contract|time\s+is\s+of\s+the\s+essence)\b"
+            ],
+            "negative_patterns": [r"\b(unvested\s+stock\s+options?\s+shall\s+be\s+forfeited|bonus\s+clawback)\b"],
+            "headings": ["default", "forfeiture", "failure to complete", "breach & forfeiture"]
         },
-        {
-            "type": "Representations & Warranties",
-            "category": "Representations & Warranties",
-            "risk": "medium",
-            "dimension": "Legal",
-            "keywords": ["warranties", "representations", "represent and warrant", "as is", "warranty disclaimer"],
-            "pattern": r"\b(warranties|representations|represent\s+and\s+warrant|as\s+is|warranty\s+disclaimer|express\s+warranty|implied\s+warranty)\b"
+
+        # --- Confidentiality & IP ---
+        "CONFIDENTIALITY_NDA": {
+            "patterns": [
+                r"\b(confidential\s+information|proprietary\s+information|non[- ]?disclosure|trade\s+secrets|standard\s+of\s+care|return\s+or\s+destroy\s+confidential)\b"
+            ],
+            "negative_patterns": [],
+            "headings": ["confidentiality", "non-disclosure", "trade secrets", "proprietary information"]
         },
-        {
-            "type": "Force Majeure",
-            "category": "Force Majeure",
-            "risk": "low",
-            "dimension": "Operational",
-            "keywords": ["force majeure", "act of god", "natural disaster", "pandemic", "unforeseen circumstances"],
-            "pattern": r"\b(force\s+majeure|act\s+of\s+god|natural\s+disaster|pandemic|epidemic|unforeseen\s+circumstances)\b"
+        "IP_ASSIGNMENT": {
+            "patterns": [
+                r"\b(intellectual\s+property\s+assignment|inventions?\s+assignment|work\s+(?:made\s+)?for\s+hire|all\s+inventions,\s+patents,\s+and\s+software|proprietary\s+rights|exclusive\s+property\s+of\s+(?:employer|company))\b"
+            ],
+            "negative_patterns": [],
+            "headings": ["intellectual property", "inventions", "ip assignment", "work for hire", "proprietary rights"]
         },
-        {
-            "type": "Notices & Formal Communications",
-            "category": "Notices & Formal Communications",
-            "risk": "low",
-            "dimension": "Operational",
-            "keywords": ["notices under this agreement", "notice address", "registered post", "mode of service of notice"],
-            "pattern": r"\b(any\s+notice\s+required|notices\s+under\s+this\s+agreement|served\s+by\s+registered\s+post|notice\s+address|mode\s+of\s+service\s+of\s+notice)\b"
+        "LICENSE_GRANT": {
+            "patterns": [
+                r"\b(grant\s+of\s+license|grants\s+a\s+non-exclusive|licensed\s+software|license\s+scope|permitted\s+named\s+users)\b"
+            ],
+            "negative_patterns": [],
+            "headings": ["license grant", "grant of license", "license scope"]
+        },
+
+        # --- Commercial General ---
+        "TERMINATION_NOTICE": {
+            "patterns": [
+                r"\b(termination\s+for\s+cause|termination\s+without\s+cause|written\s+notice\s+of\s+termination|either\s+party\s+may\s+terminate|notice\s+period\s+of\s+\d+\s+days|right\s+to\s+terminate)\b"
+            ],
+            "negative_patterns": [],
+            "headings": ["termination", "notice period", "termination & notice", "separation"]
+        },
+        "INDEMNITY_LIABILITY": {
+            "patterns": [
+                r"\b(indemnify\s+(?:and|&)\s+hold\s+harmless|indemnity|limitation\s+of\s+liability|aggregate\s+liability\s+(?:is\s+capped|shall\s+not\s+exceed)|consequential\s+damages\s+exclusion)\b"
+            ],
+            "negative_patterns": [],
+            "headings": ["indemnity", "liability", "limitation of liability", "indemnification"]
+        },
+        "GOVERNING_LAW_JURISDICTION": {
+            "patterns": [
+                r"\b(governed\s+by\s+(?:and\s+construed\s+in\s+accordance\s+with\s+)?(?:the\s+)?laws\s+of|exclusive\s+jurisdiction\s+of\s+courts?|subject\s+to\s+(?:the\s+)?jurisdiction\s+of)\b"
+            ],
+            "negative_patterns": [],
+            "headings": ["governing law", "jurisdiction", "applicable law", "choice of law"]
+        },
+        "DISPUTE_RESOLUTION_ARBITRATION": {
+            "patterns": [
+                r"\b(arbitration\s+shall\s+be\s+held|arbitral\s+tribunal|dispute\s+resolution\s+mechanism|arbitration\s+seated\s+in|arbitrator)\b"
+            ],
+            "negative_patterns": [],
+            "headings": ["arbitration", "dispute resolution", "arbitral tribunal"]
         }
-    ]
+    }
 
     def __init__(self):
         super().__init__(
             name="Clause Intelligence Agent",
-            description="Extracts and categorizes clauses across 20+ commercial and real estate conveyance categories using semantic pattern matching.",
-            capabilities=["clause_extraction", "page_mapping", "category_classification", "property_clause_detection"]
+            description="Extracts and categorizes clauses using domain-weighted multi-factor semantic classification and canonical taxonomy mapping.",
+            capabilities=["clause_extraction", "domain_weighted_classification", "canonical_taxonomy_mapping"]
         )
 
     def execute(self, context: Dict[str, Any]) -> AgentResult:
         text = context.get("text", "")
-        page_texts = context.get("page_texts", [])
+        doc_type = context.get("document_type", "OTHER_LEGAL_DOCUMENT")
+        detected_domains = context.get("detected_domains", ["GENERAL_COMMERCIAL"])
         
-        # Build page offset map
-        page_offsets = []
-        if page_texts:
-            curr = 0
-            for p_num, p_text in enumerate(page_texts, start=1):
-                page_offsets.append((curr, p_num))
-                curr += len(p_text)
+        playbook: DomainPlaybook = resolve_domain_playbook(doc_type, detected_domains)
+        primary_domain = playbook.domain_name
+        
+        blocks = self._segment_into_clause_blocks(text)
+        clauses: List[Dict[str, Any]] = []
+        findings: List[AgentFindingModel] = []
+        
+        for idx, block in enumerate(blocks):
+            heading = block.get("heading", "").strip()
+            content = block.get("content", "").strip()
+            clean_text = f"{heading}\n{content}".strip()
+            lower_block = clean_text.lower()
+            
+            # Multi-factor score evaluation across candidate canonical categories
+            best_cid = None
+            best_score = -10.0
+            
+            for cid, candidate in self.CANDIDATE_PATTERNS.items():
+                score = 0.0
+                defn = CANONICAL_CLAUSE_DEFINITIONS.get(cid, {})
+                primary_domains_for_cid = defn.get("primary_domains", [])
                 
-        def get_page(pos):
-            if not page_offsets: return 1
-            pg = 1
-            for start, num in page_offsets:
-                if pos >= start: pg = num
-                else: break
-            return pg
-
-        # 1. Segment text into logical blocks / clauses
-        # Split by numbered items (e.g. 1. TITLE, Clause 1, Section 1, SCHEDULE) or double newlines
-        blocks = []
-        raw_splits = re.split(r"(?:\n\s*(?=(?:\d+\.|\bClause\s+\d+|\bSection\s+\d+|\bWHEREAS\b|\bNOW THIS\b|\bSCHEDULE\b)))|\n\s*\n+", text)
-        
-        curr_offset = 0
-        for block in raw_splits:
-            clean = block.strip()
-            if len(clean) >= 25:
-                pos = text.find(clean, curr_offset)
-                if pos == -1: pos = curr_offset
-                blocks.append((clean, pos))
-                curr_offset = pos + len(clean)
-
-        extracted_clauses = []
-        findings = []
-        seen_contents = set()
-
-        for block_text, pos in blocks:
-            lower_block = block_text.lower()
-            
-            # Score this block against all rules to find the best semantic category
-            best_rule = None
-            best_score = 0
-            
-            for rule in self.RULES:
-                score = 0
-                # Check regex pattern
-                if re.search(rule["pattern"], block_text, re.IGNORECASE):
-                    score += 3
-                # Check keyword hits
-                for kw in rule.get("keywords", []):
-                    if kw in lower_block:
-                        score += 1
+                # 1. Heading Evidence
+                for h_kw in candidate.get("headings", []):
+                    if h_kw in heading.lower():
+                        score += 5.0
+                        break
                         
-                if score > best_score:
-                    best_score = score
-                    best_rule = rule
-
-            if best_rule and best_score >= 2:
-                fp = re.sub(r"\s+", " ", block_text[:60].lower())
-                if fp in seen_contents:
+                # 2. Domain / Playbook Affinity
+                if primary_domain in primary_domains_for_cid:
+                    score += 3.0
+                elif "REAL_ESTATE" in primary_domains_for_cid and primary_domain == "EMPLOYMENT_LABOR":
+                    # Strong negative bias against real estate categories inside employment documents
+                    score -= 8.0
+                elif "REAL_ESTATE" in primary_domains_for_cid and primary_domain in ["CONFIDENTIALITY_NDA", "IP_SOFTWARE_TECH"]:
+                    score -= 6.0
+                    
+                # 3. Contextual Negative Indicators (Veto triggers)
+                has_negative = False
+                for neg_pat in candidate.get("negative_patterns", []):
+                    if re.search(neg_pat, lower_block, re.IGNORECASE):
+                        has_negative = True
+                        score -= 10.0
+                        break
+                        
+                if has_negative:
                     continue
-                seen_contents.add(fp)
-                
-                page_num = get_page(pos)
-                clause_obj = {
-                    "type": best_rule["type"],
-                    "category": best_rule["category"],
-                    "risk": best_rule["risk"],
-                    "dimension": best_rule["dimension"],
-                    "content": block_text[:350] + "..." if len(block_text) > 350 else block_text,
-                    "description": f"{best_rule['type']} clause (Page {page_num})",
-                    "page": page_num
-                }
-                extracted_clauses.append(clause_obj)
-                
-                risk_score = 85 if best_rule["risk"] == "high" else (50 if best_rule["risk"] == "medium" else 20)
+                    
+                # 4. Positive Regex Pattern Matches
+                for pat in candidate.get("patterns", []):
+                    matches = list(re.finditer(pat, lower_block, re.IGNORECASE))
+                    if matches:
+                        score += len(matches) * 3.0
+                        
+                if score > best_score and score >= 2.0:
+                    best_score = score
+                    best_cid = cid
+                    
+            # Fallback if no specific rule met threshold
+            if not best_cid:
+                # Check if heading gives a clue
+                heading_canonical = normalize_to_canonical_id(heading)
+                if heading_canonical:
+                    best_cid = heading_canonical
+                else:
+                    best_cid = "NOTICES_COMMUNICATIONS" if "notice" in lower_block else "POSITION_DUTIES" if primary_domain == "EMPLOYMENT_LABOR" and idx == 0 else "GENERAL_PROVISION"
+
+            cid_defn = CANONICAL_CLAUSE_DEFINITIONS.get(best_cid, {
+                "display": heading.title() if heading else "General Clause",
+                "dimension": "Legal",
+                "default_risk": "low"
+            })
+            
+            display_type = cid_defn.get("display", best_cid)
+            dimension = cid_defn.get("dimension", "Legal")
+            risk = cid_defn.get("default_risk", "low")
+            
+            clause_obj = {
+                "id": f"clause-{idx+1}",
+                "canonical_id": best_cid,
+                "type": display_type,
+                "category": display_type,
+                "heading": heading,
+                "content": content[:400] if len(content) > 400 else content,
+                "full_text": clean_text,
+                "page": block.get("page", 1),
+                "risk": risk,
+                "dimension": dimension,
+                "confidence": min(0.96, max(0.60, 0.60 + (best_score * 0.04)))
+            }
+            clauses.append(clause_obj)
+            
+            if risk in ["high", "medium"] or best_score >= 4.0:
                 findings.append(AgentFindingModel(
-                    id=f"clause-{len(findings)+1}",
+                    id=f"clause-finding-{len(findings)+1}",
                     agent="Clause Intelligence Agent",
-                    dimension=best_rule["dimension"],
-                    category=best_rule["category"],
-                    severity=best_rule["risk"].upper(),
-                    risk_score=risk_score,
-                    clause_type=best_rule["type"],
-                    clause_text=clause_obj["content"],
-                    page_number=page_num,
-                    evidence=block_text[:200],
-                    claim=f"Identified {best_rule['type']} provision.",
-                    reason=f"Clause contains operational terms governing {best_rule['category']}.",
-                    recommendation="Review terms to ensure balance of rights and clear risk thresholds.",
+                    dimension=dimension,
+                    category=display_type,
+                    severity="HIGH" if risk == "high" else ("MEDIUM" if risk == "medium" else "LOW"),
+                    risk_score=75 if risk == "high" else (50 if risk == "medium" else 20),
+                    clause_type=display_type,
+                    clause_text=content[:250],
+                    page_number=block.get("page", 1),
+                    evidence=f"Heading: '{heading}' | Canonical: {best_cid} (Score: {best_score:.1f})",
+                    claim=f"Identified {display_type} clause under {primary_domain} taxonomy.",
+                    reason=f"Structured classification matched canonical category '{best_cid}'.",
+                    recommendation="Review terms against standard market benchmarks." if risk in ["high", "medium"] else "Standard operative terms.",
                     source_type="DOCUMENT_TEXT",
                     verification_status="TEXT_SUPPORTED",
-                    confidence=0.94
+                    confidence=clause_obj["confidence"]
                 ))
 
+        summary_msg = f"Extracted {len(clauses)} clause block(s) across {len(set(c['canonical_id'] for c in clauses))} canonical categories ({primary_domain} playbook)."
+        
         return AgentResult(
             agent_name=self.name,
             status="success",
             confidence=0.94,
-            summary=f"Extracted {len(extracted_clauses)} structured clauses across {len(set(c['type'] for c in extracted_clauses))} distinct categories.",
+            summary=summary_msg,
             findings=findings,
-            data={"clauses": extracted_clauses, "total_clauses": len(extracted_clauses)}
+            data={"clauses": clauses, "total_clauses": len(clauses), "primary_domain": primary_domain}
         )
+
+    def _segment_into_clause_blocks(self, text: str) -> List[Dict[str, Any]]:
+        """Segments raw text into structured clause units by numbered sections or paragraph headers."""
+        blocks: List[Dict[str, Any]] = []
+        
+        # Regex to detect clause number headings e.g. "1. TITLE:", "  2. MORTGAGE:", "Clause 3:", "SECTION 4. COMPENSATION"
+        pattern = r"(?:^|\n)\s*(?:Clause\s+\d+[\.\:]?|\d+[\.\)]|\bSECTION\s+\d+[\.\:]?|\bARTICLE\s+[IVXLCDM\d]+[\.\:]?)\s*([A-Za-z\s&/,\-]{3,60}?)(?::|\n|\.\s+)"
+        
+        matches = list(re.finditer(pattern, text, re.MULTILINE))
+        if len(matches) >= 2:
+            for i in range(len(matches)):
+                start = matches[i].start()
+                end = matches[i+1].start() if i + 1 < len(matches) else len(text)
+                heading = matches[i].group(1).strip()
+                content = text[start:end].strip()
+                blocks.append({"heading": heading, "content": content, "page": 1})
+            return blocks
+            
+        # Paragraph fallback
+        paras = [p.strip() for p in text.split("\n\n") if len(p.strip()) > 30]
+        if paras:
+            for p in paras:
+                first_line = p.split("\n")[0][:60]
+                blocks.append({"heading": first_line, "content": p, "page": 1})
+            return blocks
+            
+        return [{"heading": "General Document Body", "content": text, "page": 1}]

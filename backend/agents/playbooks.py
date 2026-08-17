@@ -1,9 +1,10 @@
 """
 Domain Playbooks Architecture for LexGuard-MA
 Provides modular, extensible domain-specific playbooks for legal document analysis.
-Adding new legal domains does not require rewriting core orchestrator logic.
+Each playbook uses shared canonical clause IDs and domain-specific expectations.
 """
 from typing import Dict, Any, List, Optional
+from .clause_taxonomy import CANONICAL_CLAUSE_DEFINITIONS, normalize_to_canonical_id
 
 
 class DomainPlaybook:
@@ -12,22 +13,49 @@ class DomainPlaybook:
         domain_name: str,
         display_name: str,
         supported_types: List[str],
-        expected_clause_categories: List[str],
+        expected_canonical_ids: List[str],
         applicable_risk_dimensions: List[str],
-        relevant_research_acts: List[str],
+        jurisdiction_statutes: Dict[str, List[str]],  # Country/Jurisdiction -> list of applicable acts
         applicable_specialist_agents: List[str],
-        fact_keys: List[str],
-        jurisdiction_rules: Dict[str, Any] = None
+        fact_keys: List[str]
     ):
         self.domain_name = domain_name
         self.display_name = display_name
         self.supported_types = supported_types
-        self.expected_clause_categories = expected_clause_categories
+        self.expected_canonical_ids = expected_canonical_ids
         self.applicable_risk_dimensions = applicable_risk_dimensions
-        self.relevant_research_acts = relevant_research_acts
+        self.jurisdiction_statutes = jurisdiction_statutes
         self.applicable_specialist_agents = applicable_specialist_agents
         self.fact_keys = fact_keys
-        self.jurisdiction_rules = jurisdiction_rules or {}
+
+    @property
+    def expected_clause_categories(self) -> List[str]:
+        """Returns human-readable display names for expected canonical clause IDs."""
+        return [
+            CANONICAL_CLAUSE_DEFINITIONS.get(cid, {}).get("display", cid)
+            for cid in self.expected_canonical_ids
+        ]
+
+    @property
+    def relevant_research_acts(self) -> List[str]:
+        """Backward-compatible access to default/Indian statutory acts."""
+        return self.jurisdiction_statutes.get("INDIA", []) or self.jurisdiction_statutes.get("DEFAULT", [])
+
+    def get_statutes_for_jurisdiction(self, country_or_jurisdiction: str) -> List[str]:
+        """Retrieve relevant statutory acts for the detected document jurisdiction."""
+        clean_j = (country_or_jurisdiction or "").upper().strip()
+        
+        # Check explicit country/region
+        if "INDIA" in clean_j or "BHARAT" in clean_j:
+            return self.jurisdiction_statutes.get("INDIA", [])
+        elif "US" in clean_j or "USA" in clean_j or "DELAWARE" in clean_j or "CALIFORNIA" in clean_j or "NEW YORK" in clean_j:
+            return self.jurisdiction_statutes.get("US", [])
+        elif "UK" in clean_j or "ENGLAND" in clean_j or "WALES" in clean_j:
+            return self.jurisdiction_statutes.get("UK", [])
+        elif "SINGAPORE" in clean_j:
+            return self.jurisdiction_statutes.get("SINGAPORE", [])
+            
+        return self.jurisdiction_statutes.get("DEFAULT", [])
 
 
 # 1. Real Estate & Property Conveyance Playbook
@@ -38,16 +66,16 @@ PROPERTY_PLAYBOOK = DomainPlaybook(
         "LAND_SALE_DEED", "LAND_SALE_AGREEMENT", "LAND_LEASE",
         "COMMERCIAL_LEASE", "GIFT_DEED", "MORTGAGE_DEED", "POWER_OF_ATTORNEY"
     ],
-    expected_clause_categories=[
-        "Property Description & Schedule", "Title & Ownership", "Encumbrance & Mortgage",
-        "Consideration & Payment", "Possession", "Registration & Stamp Duty",
-        "Taxes & Outgoings", "Indemnity & Liability", "Dispute Resolution & Jurisdiction"
+    expected_canonical_ids=[
+        "PROPERTY_DESCRIPTION", "TITLE_OWNERSHIP", "ENCUMBRANCE_MORTGAGE",
+        "CONSIDERATION_PAYMENT", "POSSESSION_REAL_ESTATE", "REGISTRATION_STAMP_DUTY",
+        "TAXES_OUTGOINGS", "INDEMNITY_LIABILITY", "DISPUTE_RESOLUTION_ARBITRATION"
     ],
     applicable_risk_dimensions=["Legal", "Financial", "Compliance", "Operational"],
-    relevant_research_acts=[
-        "Transfer of Property Act, 1882", "Registration Act, 1908",
-        "Indian Stamp Act, 1899", "Specific Relief Act, 1963"
-    ],
+    jurisdiction_statutes={
+        "INDIA": ["Transfer of Property Act, 1882", "Registration Act, 1908", "Indian Stamp Act, 1899", "Specific Relief Act, 1963"],
+        "DEFAULT": []
+    },
     applicable_specialist_agents=[
         "Compliance Agent", "Obligation Extraction Agent", "Negotiation Agent", "Redlining Agent"
     ],
@@ -65,15 +93,17 @@ EMPLOYMENT_PLAYBOOK = DomainPlaybook(
     domain_name="EMPLOYMENT_LABOR",
     display_name="Employment, Labor & Service Contracts",
     supported_types=["EMPLOYMENT_AGREEMENT", "OFFER_LETTER", "INTERNSHIP_AGREEMENT", "CONSULTANCY_AGREEMENT"],
-    expected_clause_categories=[
-        "Duties & Position", "Compensation & Benefits", "Termination & Notice Period",
-        "Confidentiality & Non-Disclosure", "Non-Compete & Restraint", "Non-Solicitation",
-        "Intellectual Property Assignment", "Governing Law & Jurisdiction"
+    expected_canonical_ids=[
+        "POSITION_DUTIES", "COMPENSATION_BENEFITS", "EMPLOYMENT_TERM",
+        "TERMINATION_NOTICE", "CONFIDENTIALITY_NDA", "NON_COMPETE",
+        "NON_SOLICITATION", "IP_ASSIGNMENT", "GOVERNING_LAW_JURISDICTION"
     ],
     applicable_risk_dimensions=["Legal", "Compliance", "Operational", "Financial", "IP"],
-    relevant_research_acts=[
-        "Indian Contract Act, 1872", "Industrial Disputes Act, 1947", "Payment of Gratuity Act, 1972"
-    ],
+    jurisdiction_statutes={
+        "INDIA": ["Indian Contract Act, 1872", "Industrial Disputes Act, 1947", "Payment of Gratuity Act, 1972"],
+        "US": ["Fair Labor Standards Act (FLSA)", "Title VII Civil Rights Act", "State Non-Compete Statutes"],
+        "DEFAULT": []
+    },
     applicable_specialist_agents=[
         "Compliance Agent", "Obligation Extraction Agent", "Negotiation Agent", "Redlining Agent", "Privacy & PII Agent"
     ],
@@ -90,15 +120,16 @@ NDA_PLAYBOOK = DomainPlaybook(
     domain_name="CONFIDENTIALITY_NDA",
     display_name="Non-Disclosure & Trade Secrets",
     supported_types=["NDA", "CONFIDENTIALITY_AGREEMENT", "PROPRIETARY_INFORMATION_AGREEMENT"],
-    expected_clause_categories=[
-        "Definition of Confidential Information", "Exclusions from Confidentiality",
-        "Standard of Care & Non-Use", "Term & Duration", "Return or Destruction of Materials",
-        "Governing Law & Jurisdiction", "Remedies & Injunctive Relief"
+    expected_canonical_ids=[
+        "CONFIDENTIALITY_NDA", "TERMINATION_NOTICE", "GOVERNING_LAW_JURISDICTION",
+        "DISPUTE_RESOLUTION_ARBITRATION", "NOTICES_COMMUNICATIONS"
     ],
     applicable_risk_dimensions=["Legal", "Privacy", "IP", "Operational"],
-    relevant_research_acts=[
-        "Indian Contract Act, 1872", "Information Technology Act, 2000"
-    ],
+    jurisdiction_statutes={
+        "INDIA": ["Indian Contract Act, 1872", "Information Technology Act, 2000"],
+        "US": ["Defend Trade Secrets Act (DTSA)", "Uniform Trade Secrets Act (UTSA)"],
+        "DEFAULT": []
+    },
     applicable_specialist_agents=[
         "Obligation Extraction Agent", "Negotiation Agent", "Redlining Agent"
     ],
@@ -117,15 +148,16 @@ IP_TECH_PLAYBOOK = DomainPlaybook(
         "SOFTWARE_LICENSE", "SAAS_AGREEMENT", "SERVICE_AGREEMENT", "EULA",
         "SOURCE_CODE_ESCROW", "MASTER_SERVICES_AGREEMENT"
     ],
-    expected_clause_categories=[
-        "License Grant & Scope", "Intellectual Property Ownership", "SLA & Uptime Commitments",
-        "Data Protection & Security", "Indemnity & IP Infringement", "Limitation of Liability",
-        "Termination & Transition Support", "Governing Law & Dispute Resolution"
+    expected_canonical_ids=[
+        "LICENSE_GRANT", "IP_ASSIGNMENT", "SLA_SERVICE_LEVEL", "DATA_PROTECTION_PRIVACY",
+        "INDEMNITY_LIABILITY", "TERMINATION_NOTICE", "GOVERNING_LAW_JURISDICTION"
     ],
     applicable_risk_dimensions=["Legal", "Financial", "IP", "Privacy", "Operational"],
-    relevant_research_acts=[
-        "Copyright Act, 1957", "Information Technology Act, 2000", "Digital Personal Data Protection Act, 2023"
-    ],
+    jurisdiction_statutes={
+        "INDIA": ["Copyright Act, 1957", "Information Technology Act, 2000", "Digital Personal Data Protection Act, 2023"],
+        "US": ["US Copyright Act 17 USC", "Uniform Computer Information Transactions Act (UCITA)"],
+        "DEFAULT": []
+    },
     applicable_specialist_agents=[
         "Compliance Agent", "Obligation Extraction Agent", "Negotiation Agent", "Redlining Agent", "Privacy & PII Agent"
     ],
@@ -141,15 +173,16 @@ PRIVACY_PLAYBOOK = DomainPlaybook(
     domain_name="DATA_PRIVACY",
     display_name="Data Privacy & Processing Agreements",
     supported_types=["DATA_PROCESSING_AGREEMENT", "DPA", "PRIVACY_POLICY", "TERMS_OF_SERVICE"],
-    expected_clause_categories=[
-        "Scope & Purpose of Processing", "Data Principal Rights", "Technical & Organizational Measures",
-        "Sub-processor Appointment", "Breach Notification Timeline", "Data Retention & Erasure",
-        "Cross-Border Data Transfers", "Audit & Inspection Rights"
+    expected_canonical_ids=[
+        "DATA_PROTECTION_PRIVACY", "CONFIDENTIALITY_NDA", "TERMINATION_NOTICE",
+        "INDEMNITY_LIABILITY", "GOVERNING_LAW_JURISDICTION"
     ],
     applicable_risk_dimensions=["Compliance", "Privacy", "Legal", "Operational"],
-    relevant_research_acts=[
-        "Digital Personal Data Protection Act, 2023", "Information Technology Act, 2000"
-    ],
+    jurisdiction_statutes={
+        "INDIA": ["Digital Personal Data Protection Act, 2023", "Information Technology Act, 2000"],
+        "US": ["California Consumer Privacy Act (CCPA/CPRA)", "HIPAA", "FTC Act Section 5"],
+        "DEFAULT": []
+    },
     applicable_specialist_agents=[
         "Compliance Agent", "Privacy & PII Agent", "Obligation Extraction Agent", "Negotiation Agent"
     ],
@@ -168,15 +201,16 @@ CORPORATE_PLAYBOOK = DomainPlaybook(
         "SHAREHOLDERS_AGREEMENT", "SHARE_PURCHASE_AGREEMENT", "PARTNERSHIP_AGREEMENT",
         "JOINT_VENTURE_AGREEMENT", "MOU", "LOAN_AGREEMENT"
     ],
-    expected_clause_categories=[
-        "Capital Structure & Consideration", "Board Representation & Quorum", "Reserved Matters / Veto Rights",
-        "Transfer Restrictions (ROFR/ROFO)", "Tag-Along & Drag-Along Rights", "Representations & Warranties",
-        "Indemnification & Escrow", "Dispute Resolution & Exit Mechanisms"
+    expected_canonical_ids=[
+        "CONSIDERATION_PAYMENT", "REPRESENTATIONS_WARRANTIES", "INDEMNITY_LIABILITY",
+        "TERMINATION_NOTICE", "GOVERNING_LAW_JURISDICTION", "DISPUTE_RESOLUTION_ARBITRATION"
     ],
     applicable_risk_dimensions=["Legal", "Financial", "Operational", "Compliance"],
-    relevant_research_acts=[
-        "Companies Act, 2013", "Indian Partnership Act, 1932", "Foreign Exchange Management Act, 1999"
-    ],
+    jurisdiction_statutes={
+        "INDIA": ["Companies Act, 2013", "Indian Partnership Act, 1932", "Foreign Exchange Management Act, 1999"],
+        "US": ["Delaware General Corporation Law (DGCL)", "Securities Act of 1933"],
+        "DEFAULT": []
+    },
     applicable_specialist_agents=[
         "Compliance Agent", "Obligation Extraction Agent", "Negotiation Agent", "Redlining Agent"
     ],
@@ -195,15 +229,16 @@ SUPPLY_PLAYBOOK = DomainPlaybook(
         "VENDOR_AGREEMENT", "SUPPLIER_AGREEMENT", "DISTRIBUTOR_AGREEMENT",
         "FRANCHISE_AGREEMENT", "CONSTRUCTION_CONTRACT"
     ],
-    expected_clause_categories=[
-        "Purchase Orders & Deliverables", "Pricing & Payment Terms", "Quality Standards & Inspection",
-        "Defects Liability & Warranty", "Force Majeure", "Termination for Convenience/Cause",
-        "Liquidated Damages & Penalties", "Governing Law & Arbitration"
+    expected_canonical_ids=[
+        "CONSIDERATION_PAYMENT", "INDEMNITY_LIABILITY", "TERMINATION_NOTICE",
+        "REPRESENTATIONS_WARRANTIES", "FORCE_MAJEURE", "DISPUTE_RESOLUTION_ARBITRATION"
     ],
     applicable_risk_dimensions=["Financial", "Operational", "Legal", "Compliance"],
-    relevant_research_acts=[
-        "Sale of Goods Act, 1930", "Indian Contract Act, 1872", "Arbitration and Conciliation Act, 1996"
-    ],
+    jurisdiction_statutes={
+        "INDIA": ["Sale of Goods Act, 1930", "Indian Contract Act, 1872", "Arbitration and Conciliation Act, 1996"],
+        "US": ["Uniform Commercial Code (UCC) Article 2"],
+        "DEFAULT": []
+    },
     applicable_specialist_agents=[
         "Obligation Extraction Agent", "Negotiation Agent", "Redlining Agent", "Compliance Agent"
     ],
@@ -214,20 +249,20 @@ SUPPLY_PLAYBOOK = DomainPlaybook(
     ]
 )
 
-# 8. General Open-Set Playbook (Fallback for Unseen / Other Legal Documents)
+# 8. General Open-Set Playbook
 GENERAL_PLAYBOOK = DomainPlaybook(
     domain_name="GENERAL_COMMERCIAL",
     display_name="General Legal & Commercial Document",
     supported_types=["OTHER_LEGAL_DOCUMENT", "OTHER", "COMMERCIAL_CONTRACT", "LEGAL_DECLARATION"],
-    expected_clause_categories=[
-        "Parties & Recitals", "Rights & Obligations", "Consideration & Commercial Terms",
-        "Term & Termination", "Liability & Indemnity", "Governing Law & Jurisdiction",
-        "Dispute Resolution & Notices"
+    expected_canonical_ids=[
+        "CONSIDERATION_PAYMENT", "TERMINATION_NOTICE", "INDEMNITY_LIABILITY",
+        "GOVERNING_LAW_JURISDICTION", "DISPUTE_RESOLUTION_ARBITRATION"
     ],
     applicable_risk_dimensions=["Legal", "Financial", "Operational", "Compliance"],
-    relevant_research_acts=[
-        "Indian Contract Act, 1872", "Arbitration and Conciliation Act, 1996"
-    ],
+    jurisdiction_statutes={
+        "INDIA": ["Indian Contract Act, 1872", "Arbitration and Conciliation Act, 1996"],
+        "DEFAULT": []
+    },
     applicable_specialist_agents=[
         "Obligation Extraction Agent", "Negotiation Agent", "Redlining Agent", "Compliance Agent"
     ],
@@ -237,7 +272,6 @@ GENERAL_PLAYBOOK = DomainPlaybook(
     ]
 )
 
-# Registry of all playbooks
 PLAYBOOK_REGISTRY: List[DomainPlaybook] = [
     PROPERTY_PLAYBOOK,
     EMPLOYMENT_PLAYBOOK,
@@ -253,16 +287,12 @@ PLAYBOOK_REGISTRY: List[DomainPlaybook] = [
 def resolve_domain_playbook(doc_type: str, detected_domains: List[str] = None) -> DomainPlaybook:
     """
     Dynamically select the most suitable DomainPlaybook based on document type and detected domains.
-    Never fails; gracefully falls back to GENERAL_PLAYBOOK for unknown document types.
     """
     clean_type = (doc_type or "").upper().strip()
-    
-    # 1. Exact match on supported document types
     for pb in PLAYBOOK_REGISTRY:
         if clean_type in [t.upper() for t in pb.supported_types]:
             return pb
             
-    # 2. Match on detected legal domains
     if detected_domains:
         for domain in detected_domains:
             norm_dom = domain.upper().strip()
@@ -270,5 +300,4 @@ def resolve_domain_playbook(doc_type: str, detected_domains: List[str] = None) -
                 if norm_dom in pb.domain_name or any(norm_dom in d for d in pb.domain_name.split("_")):
                     return pb
 
-    # 3. Default fallback for open-set / unseen documents
     return GENERAL_PLAYBOOK
