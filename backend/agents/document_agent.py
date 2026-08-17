@@ -208,7 +208,7 @@ LEGAL_DOMAINS_CRITERIA = {
         r"\b(real\s+estate|immovable\s+property|land\s+sale|lease\s+deed|ground\s+lease|mortgage\s+deed|gift\s+deed|conveyance\s+deed|schedule\s+of\s+property|survey\s+no|khata\s+no|demised\s+land|sub-registrar)\b"
     ],
     "EMPLOYMENT_LABOR": [
-        r"\b(employer|employee|executive\s+employment|employment\s+agreement|base\s+salary|annual\s+ctc|probation\s+period|non-solicitation\s+of\s+employees|severance\s+benefit|inventions\s+assignment)\b"
+        r"\b(executive\s+employment|employment\s+agreement|offer\s+of\s+employment|base\s+salary|annual\s+ctc|probation\s+period|terms\s+of\s+employment|employer\s+and\s+employee|employee\s+benefit\s+plan|severance\s+benefit|inventions\s+assignment)\b"
     ],
     "CONFIDENTIALITY_NDA": [
         r"\b(confidential\s+information|non[- ]?disclosure|trade\s+secrets?|receiving\s+party|disclosing\s+party|proprietary\s+information)\b"

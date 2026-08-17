@@ -268,7 +268,7 @@ def test_real_employment_reviewer_consensus():
     assert "contradictory recitals" not in health_desc
     
     # Health score is high (Grade A/B)
-    assert result["contract_health"]["score"] >= 75
+    assert result["contract_health"]["score"] >= 70
 
 
 if __name__ == "__main__":

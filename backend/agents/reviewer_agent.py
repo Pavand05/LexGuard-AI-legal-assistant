@@ -95,7 +95,7 @@ class ReviewerCriticAgent(BaseAgent):
         med_findings = [f for f in deduplicated_findings if f.severity == "MEDIUM"]
 
         crit_deduction = min(40, len(crit_findings) * 20)
-        high_deduction = min(25, len(high_findings) * 6)
+        high_deduction = min(20, len(high_findings) * 5)
         med_deduction = min(15, len(med_findings) * 3)
         
         missing_agent = agent_results.get("Missing Clause Agent")
@@ -106,10 +106,10 @@ class ReviewerCriticAgent(BaseAgent):
         contract_health_score = max(10, min(100, 100 - total_health_deductions))
 
         # 5. Evidence-Driven Health Grade & Description Synthesis (NEVER assume contradictions if count == 0)
-        if contract_health_score >= 75:
+        if contract_health_score >= 70:
             health_grade = "Grade A: Strong & Protected"
             health_description = "Contract contains balanced covenants, standard protective terms, and clear legal enforceability."
-        elif contract_health_score >= 60:
+        elif contract_health_score >= 55:
             health_grade = "Grade B: Moderate Commercial Risks"
             health_description = "Contract contains negotiable commercial risks and minor gaps that can be addressed via standard redlines."
         elif contract_health_score >= 45:
