@@ -75,12 +75,15 @@ class ReviewerCriticAgent(BaseAgent):
                 f"Citation Agent flagged {len(unverified_cit)} high-severity legal claim(s) without primary statutory verification."
             )
 
-        # 3. Deduplicate findings by semantic fingerprint
+        # 3. Deduplicate findings across agents by normalized clause target
         deduplicated_findings: List[AgentFindingModel] = []
         seen_fingerprints = set()
         
         for f in all_raw_findings:
-            text_seed = re.sub(r"[^a-zA-Z0-9]", "", (f.clause_type + f.reason[:35] + f.clause_text[:35]).lower())
+            if f.severity in ["INFORMATIONAL", "NONE"]:
+                continue
+            clean_type = re.sub(r"^(?:negotiate|redline|audit|statutory audit|compliance check):\s*", "", f.clause_type.lower()).strip()
+            text_seed = re.sub(r"[^a-zA-Z0-9]", "", (clean_type + f.clause_text[:30]).lower())
             if text_seed in seen_fingerprints:
                 continue
             seen_fingerprints.add(text_seed)
@@ -91,22 +94,22 @@ class ReviewerCriticAgent(BaseAgent):
         high_findings = [f for f in deduplicated_findings if f.severity == "HIGH"]
         med_findings = [f for f in deduplicated_findings if f.severity == "MEDIUM"]
 
-        crit_deduction = min(50, len(crit_findings) * 25)
-        high_deduction = min(35, len(high_findings) * 15)
-        med_deduction = min(20, len(med_findings) * 6)
+        crit_deduction = min(40, len(crit_findings) * 20)
+        high_deduction = min(25, len(high_findings) * 6)
+        med_deduction = min(15, len(med_findings) * 3)
         
         missing_agent = agent_results.get("Missing Clause Agent")
         missing_count = len(missing_agent.data.get("missing_clauses", [])) if missing_agent else 0
-        missing_deduction = min(15, missing_count * 5)
+        missing_deduction = min(15, missing_count * 4)
 
         total_health_deductions = crit_deduction + high_deduction + med_deduction + missing_deduction
         contract_health_score = max(10, min(100, 100 - total_health_deductions))
 
         # 5. Evidence-Driven Health Grade & Description Synthesis (NEVER assume contradictions if count == 0)
-        if contract_health_score >= 80:
+        if contract_health_score >= 75:
             health_grade = "Grade A: Strong & Protected"
             health_description = "Contract contains balanced covenants, standard protective terms, and clear legal enforceability."
-        elif contract_health_score >= 65:
+        elif contract_health_score >= 60:
             health_grade = "Grade B: Moderate Commercial Risks"
             health_description = "Contract contains negotiable commercial risks and minor gaps that can be addressed via standard redlines."
         elif contract_health_score >= 45:

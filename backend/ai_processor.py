@@ -238,14 +238,14 @@ class DocumentProcessor:
         high_risk = sum(1 for t in ["liability", "breach", "damages"] if key_terms[t] > 0)
 
         parts = [
-            f"This appears to be a {doc_type}.",
-            f"Document contains {key_terms['payment']} payment-related terms, "
-            f"{key_terms['termination']} termination clauses, "
-            f"{key_terms['liability']} liability provisions, "
-            f"{key_terms['confidentiality']} confidentiality terms, "
-            f"{key_terms['breach']} breach clauses, and "
-            f"{key_terms['damages']} damages provisions.",
-            f"Document is approximately {word_count} words long.",
+            f"This document is classified as a {doc_type}.",
+            f"Keyword frequency audit: {key_terms['payment']} payment mention(s), "
+            f"{key_terms['termination']} termination reference(s), "
+            f"{key_terms['liability']} liability reference(s), "
+            f"{key_terms['confidentiality']} confidentiality reference(s), "
+            f"{key_terms['breach']} breach mention(s), and "
+            f"{key_terms['damages']} damages reference(s).",
+            f"Document length: approximately {word_count} words across structured sections.",
         ]
         if high_risk:
             parts.append(f"Document contains {high_risk} high-risk elements that require careful review.")

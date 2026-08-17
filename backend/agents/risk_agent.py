@@ -1,11 +1,8 @@
 """
-Risk Assessment Agent
-Calculates domain-adaptive, explainable multi-dimensional risk scores.
-Dynamically enables/disables risk dimensions (Legal, Financial, Compliance, Privacy, Operational, IP)
-based on domain applicability:
-- APPLICABLE: Actively contributes to aggregate risk score
-- NOT_APPLICABLE: Domain is outside scope for this document type (e.g. IP in Land Deeds, Financial in basic NDAs)
-- INSUFFICIENT_EVIDENCE: Applicable domain but no high/medium risk signals identified
+Risk Assessment Agent (LexGuard-MA)
+Calculates multi-dimensional risk matrix based on actual clause content, asymmetry,
+enforceability uncertainty, financial exposure, and domain relevance.
+Aggregates risk severity across structured clauses and verified upstream findings.
 """
 from typing import Dict, Any, List
 from .base_agent import BaseAgent, AgentResult, AgentFindingModel
@@ -13,56 +10,57 @@ from .playbooks import resolve_domain_playbook, DomainPlaybook
 
 
 class RiskAssessmentAgent(BaseAgent):
-    BASE_DIMENSION_WEIGHTS = {
+    BASE_DIMENSION_WEIGHTS: Dict[str, float] = {
         "Legal": 0.25,
         "Financial": 0.25,
         "Compliance": 0.20,
-        "Operational": 0.15,
         "Privacy": 0.10,
-        "IP": 0.05
+        "Operational": 0.10,
+        "IP": 0.10
     }
 
     def __init__(self):
         super().__init__(
             name="Risk Assessment Agent",
-            description="Evaluates contractual risk across dynamic applicable dimensions with domain-adaptive mathematical scoring.",
-            capabilities=["domain_adaptive_risk", "score_computation", "dimension_filtering", "exposure_analysis"]
+            description="Calculates domain-calibrated 6-dimensional risk matrix across Legal, Financial, Compliance, Privacy, Operational, and IP dimensions.",
+            capabilities=["multi_dimensional_risk", "domain_weighting", "risk_calibration"]
         )
 
     def execute(self, context: Dict[str, Any]) -> AgentResult:
         doc_type = context.get("document_type", "OTHER_LEGAL_DOCUMENT")
-        detected_domains = context.get("detected_domains", [])
+        detected_domains = context.get("detected_domains", ["GENERAL_COMMERCIAL"])
         clauses = context.get("clauses", [])
-        upstream_findings = context.get("findings", [])
+        findings = context.get("findings", [])
         
-        # 1. Resolve applicable dimensions from domain playbook
         playbook: DomainPlaybook = resolve_domain_playbook(doc_type, detected_domains)
         applicable_dims = set(playbook.applicable_risk_dimensions)
-        
-        # Auto-activate Privacy / IP if clauses exist in those areas regardless of playbook
-        clause_dims = set(c.get("dimension", "Legal") for c in clauses)
-        applicable_dims.update(clause_dims)
 
-        # 2. Aggregate findings and clauses across dimensions
-        dim_stats = {dim: {"critical": 0, "high": 0, "medium": 0, "low": 0, "total": 0} for dim in self.BASE_DIMENSION_WEIGHTS}
-        
+        dim_stats = {
+            dim: {"critical": 0, "high": 0, "medium": 0, "low": 0, "total": 0}
+            for dim in self.BASE_DIMENSION_WEIGHTS.keys()
+        }
+
+        # 1. Aggregate from structured clauses
         for c in clauses:
             dim = c.get("dimension", "Legal")
-            risk = c.get("risk", "low").lower()
-            if dim in dim_stats:
+            r = c.get("risk", "low").lower()
+            if r in ["high", "critical", "medium", "low"] and dim in dim_stats:
                 dim_stats[dim]["total"] += 1
-                if risk in dim_stats[dim]:
-                    dim_stats[dim][risk] += 1
+                dim_stats[dim][r] += 1
 
-        for f in upstream_findings:
+        # 2. Aggregate from additional verified upstream findings (without double-counting identical clauses)
+        seen_clause_types = set(c.get("type", "").lower() for c in clauses)
+        for f in findings:
             if isinstance(f, dict):
                 dim = f.get("dimension", "Legal")
                 sev = f.get("severity", "LOW").lower()
+                ctype = f.get("clause_type", "").lower()
             else:
                 dim = getattr(f, "dimension", "Legal")
                 sev = getattr(f, "severity", "LOW").lower()
+                ctype = getattr(f, "clause_type", "").lower()
                 
-            if dim in dim_stats:
+            if sev not in ["informational", "none"] and dim in dim_stats and ctype not in seen_clause_types:
                 dim_stats[dim]["total"] += 1
                 if sev in dim_stats[dim]:
                     dim_stats[dim][sev] += 1
@@ -72,60 +70,54 @@ class RiskAssessmentAgent(BaseAgent):
         weighted_overall = 0.0
         active_weight_sum = 0.0
         
+        applicable_weighted = 0.0
+        applicable_weight_sum = 0.0
         for dim, counts in dim_stats.items():
             if dim in applicable_dims:
                 # Dimension is applicable
                 if counts["critical"] > 0 or counts["high"] > 0 or counts["medium"] > 0:
                     dimension_status[dim] = "APPLICABLE"
-                    score = 15 + (counts["critical"] * 35) + (counts["high"] * 20) + (counts["medium"] * 10) + (counts["low"] * 2)
+                    score = 20 + (counts["critical"] * 35) + (counts["high"] * 25) + (counts["medium"] * 10) + (counts["low"] * 2)
+                    score = max(10, min(100, score))
+                    w = self.BASE_DIMENSION_WEIGHTS.get(dim, 0.15)
+                    dimension_breakdown[dim] = score
+                    applicable_weighted += score * w
+                    applicable_weight_sum += w
                 else:
                     dimension_status[dim] = "INSUFFICIENT_EVIDENCE"
                     score = 15 + (counts["low"] * 2)
-                    
-                score = max(10, min(100, score))
-                w = self.BASE_DIMENSION_WEIGHTS.get(dim, 0.15)
-                dimension_breakdown[dim] = score
-                weighted_overall += score * w
-                active_weight_sum += w
+                    dimension_breakdown[dim] = score
             else:
-                # Dimension is outside document domain
                 dimension_status[dim] = "NOT_APPLICABLE"
                 dimension_breakdown[dim] = 0
 
-        # Normalize score over applicable dimensions only
-        if active_weight_sum > 0:
-            overall_risk_score = int(round(weighted_overall / active_weight_sum))
+        # Calculate overall score focusing on active risk evidence
+        if applicable_weight_sum > 0:
+            overall_risk_score = int(round(applicable_weighted / applicable_weight_sum))
         else:
-            overall_risk_score = 20
+            overall_risk_score = 15
 
         # Risk tier classification
-        if overall_risk_score >= 70:
-            overall_tier = "CRITICAL / HIGH"
+        if overall_risk_score >= 65:
+            overall_tier = "HIGH"
             risk_label = "Severe Legal & Financial Exposure"
-        elif overall_risk_score >= 45:
+        elif overall_risk_score >= 35:
             overall_tier = "MEDIUM"
             risk_label = "Moderate Contractual Exposure (Negotiable)"
         else:
             overall_tier = "LOW"
-            risk_label = "Low Exposure / Standard Terms"
+            risk_label = "Low Exposure / Standard Protected Terms"
 
         high_cnt = sum(c["high"] + c["critical"] for d, c in dim_stats.items() if d in applicable_dims)
         med_cnt = sum(c["medium"] for d, c in dim_stats.items() if d in applicable_dims)
         low_cnt = sum(c["low"] for d, c in dim_stats.items() if d in applicable_dims)
-        
-        legacy_risks = {
-            "high": high_cnt,
-            "medium": med_cnt,
-            "low": low_cnt,
-            "total": len(clauses)
-        }
 
         finding = AgentFindingModel(
             id="risk-summary-01",
             agent="Risk Assessment Agent",
             dimension="Financial" if "Financial" in applicable_dims else "Legal",
             category="Risk Calculation",
-            severity=overall_tier.split(" ")[0],
+            severity="INFORMATIONAL",
             risk_score=overall_risk_score,
             clause_type="Domain-Adaptive Risk Synthesis",
             clause_text=f"Contract Risk Score: {overall_risk_score}/100 [{overall_tier}] ({risk_label}). Domain: {playbook.display_name}.",
@@ -143,16 +135,20 @@ class RiskAssessmentAgent(BaseAgent):
             agent_name=self.name,
             status="success",
             confidence=0.94,
-            summary=f"Contract Risk Score: {overall_risk_score}/100 ({overall_tier} Risk). Active Domain: {playbook.display_name}.",
+            summary=f"Risk score: {overall_risk_score}/100 ({overall_tier}). Domain: {playbook.display_name}. High/Crit: {high_cnt}, Medium: {med_cnt}.",
             findings=[finding],
             data={
-                "overall_score": overall_risk_score,
+                "overall_risk_score": overall_risk_score,
                 "overall_tier": overall_tier,
                 "risk_label": risk_label,
-                "dimensions": dimension_breakdown,
-                "dimension_status": dimension_status,
                 "applicable_dimensions": list(applicable_dims),
-                "legacy_risks": legacy_risks,
-                "scoring_formula": "Normalized sum over APPLICABLE dimensions: sum(w_i * Dim_Score_i) / sum(w_applicable)"
+                "dimension_breakdown": dimension_breakdown,
+                "dimension_status": dimension_status,
+                "risks": {
+                    "high": high_cnt,
+                    "medium": med_cnt,
+                    "low": low_cnt,
+                    "total": len(clauses)
+                }
             }
         )

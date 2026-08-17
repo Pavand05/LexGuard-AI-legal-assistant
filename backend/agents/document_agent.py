@@ -1,13 +1,13 @@
 """
-Document Intelligence Agent
-Performs open-set document classification, legal domain detection, party mapping,
-multi-tier jurisdiction resolution (Applicable Law vs Court vs Arbitral Seat),
-and document structure analysis.
+Document Intelligence Agent (LexGuard-MA)
+Performs open-set document classification, domain detection with strict semantic thresholding,
+party mapping, and canonical DocumentLegalContext resolution (Country, Governing Law, Court Jurisdiction, Arbitration Seat).
 """
 import re
 from typing import Dict, Any, List
 from .base_agent import BaseAgent, AgentResult, AgentFindingModel
 from agent_tools.document_tools import extract_entities_and_dates
+from .legal_context import resolve_document_legal_context, DocumentLegalContext
 
 
 DOCUMENT_TAXONOMY = [
@@ -40,7 +40,7 @@ DOCUMENT_TAXONOMY = [
         "type": "COMMERCIAL_LEASE",
         "display": "Commercial Lease / Tenancy Agreement",
         "domain": "REAL_ESTATE",
-        "primary_keywords": ["commercial lease", "office lease", "tenancy agreement", "rent agreement", "sub-lease", "lease deed"],
+        "primary_keywords": ["commercial lease", "office lease", "tenancy agreement", "rent agreement", "sub-lease", "lease deed of premises"],
         "supporting_keywords": ["lessor", "lessee", "landlord", "tenant", "security deposit", "monthly rent", "lock-in period", "maintenance charges", "fit-out"],
         "min_score": 2
     },
@@ -72,10 +72,14 @@ DOCUMENT_TAXONOMY = [
     # --- Employment & HR ---
     {
         "type": "EMPLOYMENT_AGREEMENT",
-        "display": "Employment Agreement / Service Contract",
+        "display": "Employment Agreement / Executive Contract",
         "domain": "EMPLOYMENT_LABOR",
-        "primary_keywords": ["employment agreement", "employment contract", "service agreement with employee", "executive employment"],
-        "supporting_keywords": ["employer", "employee", "compensation", "ctc", "salary", "probation", "notice period", "non-solicitation", "duties", "severance"],
+        "primary_keywords": [
+            "employment agreement", "employment contract", "executive employment",
+            "service agreement with employee", "executive employment agreement",
+            "employment and confidentiality agreement"
+        ],
+        "supporting_keywords": ["employer", "employee", "executive", "compensation", "ctc", "salary", "probation", "notice period", "non-solicitation", "duties", "severance", "inventions assignment", "base salary"],
         "min_score": 2
     },
     {
@@ -198,14 +202,29 @@ DOCUMENT_TAXONOMY = [
     }
 ]
 
-LEGAL_DOMAINS = {
-    "REAL_ESTATE": ["land", "property", "lease", "sale deed", "mortgage", "gift deed", "conveyance", "khata", "survey no"],
-    "EMPLOYMENT_LABOR": ["employee", "employer", "salary", "ctc", "employment", "probation", "notice period", "gratuity"],
-    "CONFIDENTIALITY_NDA": ["confidential information", "non-disclosure", "trade secret", "receiving party", "disclosing party"],
-    "IP_SOFTWARE_TECH": ["software", "license", "saas", "intellectual property", "source code", "sla", "copyright", "patent"],
-    "DATA_PRIVACY": ["personal data", "dpdp", "gdpr", "data processing", "data fiduciary", "privacy policy", "cookies"],
-    "CORPORATE_GOVERNANCE": ["shares", "shareholders", "board of directors", "investor", "partnership", "equity", "loan"],
-    "COMMERCIAL_SUPPLY": ["vendor", "supplier", "purchase order", "deliverables", "supply", "goods", "invoice"]
+# Unambiguous semantic domain keywords to prevent false cross-domain activation
+LEGAL_DOMAINS_CRITERIA = {
+    "REAL_ESTATE": [
+        r"\b(real\s+estate|immovable\s+property|land\s+sale|lease\s+deed|ground\s+lease|mortgage\s+deed|gift\s+deed|conveyance\s+deed|schedule\s+of\s+property|survey\s+no|khata\s+no|demised\s+land|sub-registrar)\b"
+    ],
+    "EMPLOYMENT_LABOR": [
+        r"\b(employer|employee|executive\s+employment|employment\s+agreement|base\s+salary|annual\s+ctc|probation\s+period|non-solicitation\s+of\s+employees|severance\s+benefit|inventions\s+assignment)\b"
+    ],
+    "CONFIDENTIALITY_NDA": [
+        r"\b(confidential\s+information|non[- ]?disclosure|trade\s+secrets?|receiving\s+party|disclosing\s+party|proprietary\s+information)\b"
+    ],
+    "IP_SOFTWARE_TECH": [
+        r"\b(software\s+license|saas\s+agreement|source\s+code|sla\s+uptime|works\s+made\s+for\s+hire|patent\s+assignment|intellectual\s+property\s+rights)\b"
+    ],
+    "DATA_PRIVACY": [
+        r"\b(personal\s+data|data\s+processing\s+agreement|data\s+fiduciary|data\s+processor|gdpr|dpdp\s+act|privacy\s+policy|breach\s+notification)\b"
+    ],
+    "CORPORATE_GOVERNANCE": [
+        r"\b(shareholders\s+agreement|board\s+of\s+directors|equity\s+shares|series\s+[a-z]\s+preferred|partnership\s+deed|investor\s+rights|rofr)\b"
+    ],
+    "COMMERCIAL_SUPPLY": [
+        r"\b(purchase\s+orders?|supplier\s+agreement|procurement\s+agreement|master\s+supply|defects\s+liability\s+period|vendor\s+agreement)\b"
+    ]
 }
 
 
@@ -213,8 +232,8 @@ class DocumentIntelligenceAgent(BaseAgent):
     def __init__(self):
         super().__init__(
             name="Document Intelligence Agent",
-            description="Performs open-set document classification, legal domain detection, multi-tier jurisdiction resolution, and party mapping.",
-            capabilities=["metadata_extraction", "open_set_classification", "domain_detection", "party_mapping", "jurisdiction_resolution"]
+            description="Performs open-set document classification, clean domain detection, party mapping, and canonical DocumentLegalContext resolution.",
+            capabilities=["metadata_extraction", "open_set_classification", "domain_detection", "party_mapping", "legal_context_resolution"]
         )
 
     def execute(self, context: Dict[str, Any]) -> AgentResult:
@@ -225,16 +244,24 @@ class DocumentIntelligenceAgent(BaseAgent):
         extracted = extract_entities_and_dates(text)
         lower_text = text.lower()
         
-        # 1. Multi-tier Legal Domain Detection
+        # 1. Canonical Legal Context Resolution (Governing Law vs Incorporation vs Jurisdiction)
+        legal_context: DocumentLegalContext = resolve_document_legal_context(text)
+
+        # 2. Strict Semantic Domain Detection
         detected_domains: List[str] = []
-        for domain_name, kw_list in LEGAL_DOMAINS.items():
-            hits = sum(1 for kw in kw_list if kw in lower_text)
+        for domain_name, pattern_list in LEGAL_DOMAINS_CRITERIA.items():
+            hits = 0
+            for pat in pattern_list:
+                matches = list(re.finditer(pat, lower_text, re.IGNORECASE))
+                hits += len(matches)
             if hits >= 2:
-                detected_domains.append(domain_name)
+                if domain_name not in detected_domains:
+                    detected_domains.append(domain_name)
+                    
         if not detected_domains:
             detected_domains = ["GENERAL_COMMERCIAL"]
 
-        # 2. Open-Set Document Taxonomy Classification
+        # 3. Open-Set Document Taxonomy Classification
         best_type = "OTHER_LEGAL_DOCUMENT"
         best_display = "Other Legal / Commercial Document"
         best_domain = detected_domains[0]
@@ -272,35 +299,29 @@ class DocumentIntelligenceAgent(BaseAgent):
         elif highest_score >= 2:
             confidence = 0.65
         else:
-            # Clean Open-Set Fallback for Unseen Document Types (e.g. Software Escrow, Patent Assignment)
             best_type = "OTHER_LEGAL_DOCUMENT"
             best_display = "Other Legal / Commercial Document"
             confidence = 0.50
             matched_evidence = [f"Unseen / open-set structure. Matched legal domains: {', '.join(detected_domains)}."]
 
-        # Check for property schedule / survey number clues
+        # Ensure primary classified domain is in detected_domains
+        if best_domain not in detected_domains and best_type != "OTHER_LEGAL_DOCUMENT":
+            detected_domains.insert(0, best_domain)
+
+        # De-duplicate domain list preserving order
+        unique_domains: List[str] = []
+        for d in detected_domains:
+            if d not in unique_domains:
+                unique_domains.append(d)
+
         has_property_schedule = bool(re.search(r"(?:schedule\s+of\s+property|schedule\s+[a-z]|survey\s+no|khata\s+no|site\s+no|bounded\s+on)", lower_text))
-        if has_property_schedule and best_domain != "REAL_ESTATE":
-            detected_domains.append("REAL_ESTATE")
 
-        # Multi-Tier Jurisdiction Resolution
-        applicable_law = "Laws of India"
-        app_law_match = re.search(r"(?:governed\s+by\s+(?:and\s+construed\s+in\s+accordance\s+with\s+)?(?:the\s+)?laws\s+of)\s+([A-Za-z\s,]+?)(?:\.|\n|;|,|and)", text, re.IGNORECASE)
-        if app_law_match:
-            applicable_law = app_law_match.group(1).strip()[:40]
-
-        court_jurisdiction = extracted.get("jurisdiction", "Competent Civil Courts")
-        arbitration_seat = None
-        arb_match = re.search(r"(?:arbitration\s+(?:shall\s+be\s+held|seated|conducted)\s+(?:at|in)\s+([A-Za-z\s]+?)(?:\.|\n|;|,))", text, re.IGNORECASE)
-        if arb_match:
-            arbitration_seat = arb_match.group(1).strip()[:30]
-
-        summary_msg = f"Document Classified: {best_display} ({best_type}) [Confidence: {int(confidence*100)}%]. Domains: {', '.join(detected_domains)}. Governing Law: {applicable_law}."
+        summary_msg = f"Document Classified: {best_display} ({best_type}) [Confidence: {int(confidence*100)}%]. Domains: {', '.join(unique_domains)}. Governing Law: {legal_context.governing_law} ({legal_context.country})."
         
         metadata = {
             "document_type": best_type,
             "document_type_display": best_display,
-            "detected_domains": list(set(detected_domains)),
+            "detected_domains": unique_domains,
             "primary_domain": best_domain,
             "filename": filename,
             "total_pages": len(page_texts),
@@ -308,9 +329,13 @@ class DocumentIntelligenceAgent(BaseAgent):
             "parties": extracted["parties"],
             "dates": extracted["dates"],
             "monetary_values": extracted["monetary_values"],
-            "applicable_law": applicable_law,
-            "court_jurisdiction": court_jurisdiction,
-            "arbitration_seat": arbitration_seat,
+            "legal_context": legal_context.model_dump(),
+            "applicable_law": legal_context.governing_law,
+            "court_jurisdiction": legal_context.court_jurisdiction or "Competent Courts",
+            "arbitration_seat": legal_context.arbitration_seat,
+            "country": legal_context.country,
+            "state_or_region": legal_context.state_or_region,
+            "incorporation_jurisdiction": legal_context.incorporation_jurisdiction,
             "classification_confidence": confidence,
             "classification_evidence": matched_evidence,
             "has_property_schedule": has_property_schedule,
@@ -325,11 +350,11 @@ class DocumentIntelligenceAgent(BaseAgent):
             severity="INFORMATIONAL",
             risk_score=10,
             clause_type="Document Classification",
-            clause_text=f"Classified: {best_display} ({best_type}) | Domains: {', '.join(detected_domains)}",
+            clause_text=f"Classified: {best_display} ({best_type}) | Governing Law: {legal_context.governing_law} | Domains: {', '.join(unique_domains)}",
             page_number=1,
             evidence="; ".join(matched_evidence[:5]),
             claim=f"Document identified under {best_domain} legal domain.",
-            reason=f"Open-set taxonomy analysis matched {len(matched_evidence)} indicator(s).",
+            reason=f"Open-set taxonomy analysis matched {len(matched_evidence)} indicator(s). Governing law: {legal_context.governing_law}.",
             recommendation="Review contracting entity capacity and ensure all schedules match official records.",
             source_type="DOCUMENT_TEXT",
             verification_status="TEXT_SUPPORTED",

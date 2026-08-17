@@ -6,7 +6,7 @@ Combines:
 2. Active Domain / Document-Type Affinity
 3. Positive Semantic Keyword Density
 4. Contextual Negative Indicators (e.g. equipment possession vs. real estate possession)
-5. Canonical Taxonomy Mapping
+5. Canonical Taxonomy Mapping & Evidence Grounding Compatibility
 """
 import re
 from typing import Dict, Any, List, Optional
@@ -19,57 +19,59 @@ from .playbooks import resolve_domain_playbook, DomainPlaybook
 
 
 class ClauseIntelligenceAgent(BaseAgent):
-    # Candidate classification rules with positive regex patterns and negative context guards
     CANDIDATE_PATTERNS: Dict[str, Dict[str, Any]] = {
         # --- Employment ---
         "POSITION_DUTIES": {
             "patterns": [
-                r"\b(position\s+(?:and|&)\s+duties|title\s+(?:and|&)\s+responsibilities|duties\s+(?:and|&)\s+position|reporting\s+to|scope\s+of\s+employment|job\s+title|appointed\s+as|responsibilities\s+of\s+the\s+executive)\b"
+                r"\b(position\s+(?:and|&)\s+duties|title\s+(?:and|&)\s+responsibilities|duties\s+(?:and|&)\s+position|reporting\s+to|scope\s+of\s+employment|job\s+title|appointed\s+as|responsibilities\s+of\s+the\s+executive|serve\s+as\s+[A-Za-z\s]+reporting)\b"
             ],
             "negative_patterns": [r"\b(schedule\s+of\s+property|survey\s+no)\b"],
-            "headings": ["position", "duties", "responsibilities", "employment", "appointment", "title"]
+            "headings": ["position", "duties", "responsibilities", "employment", "appointment", "title", "position and duties", "scope of duties"]
         },
         "COMPENSATION_BENEFITS": {
             "patterns": [
-                r"\b(compensation|base\s+salary|annual\s+ctc|annual\s+salary|bonus\s+plan|equity\s+incentive|stock\s+options?|vesting\s+schedule|fringe\s+benefits|reimbursement\s+of\s+expenses|severance\s+benefit|unvested\s+options?\s+shall\s+be\s+forfeited|clawback)\b"
+                r"\b(compensation|base\s+salary|annual\s+ctc|annual\s+salary|bonus\s+plan|equity\s+incentive|stock\s+options?|vesting\s+schedule|fringe\s+benefits|reimbursement\s+of\s+expenses|severance\s+benefit|unvested\s+options?\s+shall\s+be\s+forfeited|clawback|annualized\s+base\s+salary)\b"
             ],
             "negative_patterns": [r"\b(sale\s+consideration|advance\s+token|earnest\s+money|sub-registrar)\b"],
-            "headings": ["compensation", "salary", "remuneration", "benefits", "equity", "incentives", "bonus"]
+            "headings": ["compensation", "salary", "remuneration", "benefits", "equity", "incentives", "bonus", "compensation and benefits"]
         },
         "EMPLOYMENT_TERM": {
             "patterns": [
-                r"\b(employment\s+period|period\s+of\s+employment|term\s+of\s+employment|employment\s+term|duration\s+of\s+employment|at-will\s+employment)\b"
+                r"\b(period\s+of\s+employment|employment\s+period|term\s+of\s+employment|employment\s+term|duration\s+of\s+employment|at-will\s+employment|initial\s+fixed\s+term\s+of\s+\d+|commencing\s+on\s+the\s+effective\s+date|employs\s+executive[^\n.]+initial\s+term)\b"
             ],
-            "negative_patterns": [r"\b(lease\s+term|demised\s+premises|agricultural\s+land|survey\s+no)\b"],
-            "headings": ["term", "employment period", "duration", "tenure"]
+            "negative_patterns": [
+                r"\b(lease\s+term|demised\s+premises|agricultural\s+land|survey\s+no)\b",
+                r"\b(?:section\s+\d+\s+shall\s+survive|survives\s+termination\s+of\s+the\s+employment\s+period)\b"
+            ],
+            "headings": ["term", "employment period", "duration", "tenure", "period of employment", "employment term"]
         },
         "NON_COMPETE": {
             "patterns": [
                 r"\b(non[- ]?compete|non[- ]?competition|restrictive\s+covenant|restraint\s+of\s+trade|covenant\s+not\s+to\s+compete|competing\s+business|shall\s+not\s+engage\s+in\s+any\s+competing)\b"
             ],
             "negative_patterns": [],
-            "headings": ["non-compete", "restrictive covenants", "competition", "restraint"]
+            "headings": ["non-compete", "restrictive covenants", "competition", "restraint", "covenant not to compete"]
         },
         "NON_SOLICITATION": {
             "patterns": [
-                r"\b(non[- ]?solicit|non[- ]?solicitation|solicit\s+employees|solicit\s+customers|induce\s+any\s+employee|solicitation\s+of\s+clients)\b"
+                r"\b(non[- ]?solicit|non[- ]?solicitation|solicit\s+employees|solicit\s+customers|induce\s+any\s+employee|solicitation\s+of\s+clients|shall\s+not\s+solicit\s+any|employee\s+non-solicitation|customer\s+non-solicitation|solicitation\s+of\s+employees)\b"
             ],
             "negative_patterns": [],
-            "headings": ["non-solicitation", "solicitation", "no-poach"]
+            "headings": ["non-solicitation", "non-solicit", "solicitation", "no-poach", "employee non-solicitation", "customer non-solicitation"]
         },
         "SEVERANCE_WAIVER": {
             "patterns": [
-                r"\b(release\s+of\s+claims|general\s+release|waiver\s+and\s+release|severance\s+payment|releases\s+and\s+discharges|claims,\s+charges,\s+demands,\s+and\s+liens|waiver\s+of\s+liability)\b"
+                r"\b(release\s+of\s+claims|general\s+release|waiver\s+and\s+release|severance\s+payment|releases\s+and\s+discharges|claims,\s+charges,\s+demands,\s+and\s+liens|waiver\s+of\s+liability|separation\s+release|in\s+exchange\s+for\s+severance)\b"
             ],
             "negative_patterns": [r"\b(mortgaged\s+with|sub-registrar|survey\s+no)\b"],
-            "headings": ["release", "waiver", "severance", "separation", "discharge"]
+            "headings": ["release", "waiver", "severance", "separation", "discharge", "release and severance", "severance and release"]
         },
         "COOPERATION_HANDOVER": {
             "patterns": [
-                r"\b(executive\s+cooperation|cooperation\s+clause|return\s+of\s+company\s+property|property\s+in\s+(?:executive|employee)'s\s+possession|return\s+all\s+(?:materials|documents|laptops|keys))\b"
+                r"\b(executive\s+cooperation|cooperation\s+clause|return\s+of\s+company\s+property|property\s+in\s+(?:executive|employee)'s\s+possession|return\s+all\s+(?:materials|documents|laptops|keys)|cooperation\s+and\s+return\s+of\s+property)\b"
             ],
             "negative_patterns": [r"\b(demised\s+premises|vacant\s+possession\s+of\s+the\s+property|survey\s+no)\b"],
-            "headings": ["cooperation", "return of property", "company property", "handover"]
+            "headings": ["cooperation", "return of property", "company property", "handover", "executive cooperation"]
         },
 
         # --- Property & Real Estate ---
@@ -140,17 +142,17 @@ class ClauseIntelligenceAgent(BaseAgent):
         # --- Confidentiality & IP ---
         "CONFIDENTIALITY_NDA": {
             "patterns": [
-                r"\b(confidential\s+information|proprietary\s+information|non[- ]?disclosure|trade\s+secrets|standard\s+of\s+care|return\s+or\s+destroy\s+confidential)\b"
+                r"\b(confidential\s+information|proprietary\s+information|non[- ]?disclosure|trade\s+secrets|standard\s+of\s+care|return\s+or\s+destroy\s+confidential|maintain\s+in\s+strict\s+confidence)\b"
             ],
             "negative_patterns": [],
-            "headings": ["confidentiality", "non-disclosure", "trade secrets", "proprietary information"]
+            "headings": ["confidentiality", "non-disclosure", "trade secrets", "proprietary information", "confidential information"]
         },
         "IP_ASSIGNMENT": {
             "patterns": [
-                r"\b(intellectual\s+property\s+assignment|inventions?\s+assignment|work\s+(?:made\s+)?for\s+hire|all\s+inventions,\s+patents,\s+and\s+software|proprietary\s+rights|exclusive\s+property\s+of\s+(?:employer|company))\b"
+                r"\b(intellectual\s+property\s+assignment|inventions?\s+assignment|work\s+(?:made\s+)?for\s+hire|all\s+inventions,\s+software,\s+patents|proprietary\s+rights|exclusive\s+property\s+of\s+(?:employer|company)|works\s+of\s+authorship)\b"
             ],
             "negative_patterns": [],
-            "headings": ["intellectual property", "inventions", "ip assignment", "work for hire", "proprietary rights"]
+            "headings": ["intellectual property", "inventions", "ip assignment", "work for hire", "proprietary rights", "patents", "inventions and patents"]
         },
         "LICENSE_GRANT": {
             "patterns": [
@@ -160,27 +162,27 @@ class ClauseIntelligenceAgent(BaseAgent):
             "headings": ["license grant", "grant of license", "license scope"]
         },
 
-        # --- Commercial General ---
+        # --- Universal Commercial Terms ---
         "TERMINATION_NOTICE": {
             "patterns": [
-                r"\b(termination\s+for\s+cause|termination\s+without\s+cause|written\s+notice\s+of\s+termination|either\s+party\s+may\s+terminate|notice\s+period\s+of\s+\d+\s+days|right\s+to\s+terminate)\b"
+                r"\b(termination\s+for\s+cause|termination\s+without\s+cause|written\s+notice\s+of\s+termination|either\s+party\s+may\s+terminate|notice\s+period\s+of\s+\d+\s+days|right\s+to\s+terminate|termination\s+of\s+employment|employment\s+termination|terminate\s+executive's\s+employment)\b"
             ],
             "negative_patterns": [],
-            "headings": ["termination", "notice period", "termination & notice", "separation"]
+            "headings": ["termination", "notice period", "termination & notice", "separation", "termination of employment", "employment termination", "termination and notice period"]
         },
         "INDEMNITY_LIABILITY": {
             "patterns": [
-                r"\b(indemnify\s+(?:and|&)\s+hold\s+harmless|indemnity|limitation\s+of\s+liability|aggregate\s+liability\s+(?:is\s+capped|shall\s+not\s+exceed)|consequential\s+damages\s+exclusion)\b"
+                r"\b(indemnify\s+(?:and|&)\s+hold\s+harmless|indemnity|indemnification|limitation\s+of\s+liability|aggregate\s+liability\s+(?:is\s+capped|shall\s+not\s+exceed)|consequential\s+damages\s+exclusion)\b"
             ],
             "negative_patterns": [],
             "headings": ["indemnity", "liability", "limitation of liability", "indemnification"]
         },
         "GOVERNING_LAW_JURISDICTION": {
             "patterns": [
-                r"\b(governed\s+by\s+(?:and\s+construed\s+in\s+accordance\s+with\s+)?(?:the\s+)?laws\s+of|exclusive\s+jurisdiction\s+of\s+courts?|subject\s+to\s+(?:the\s+)?jurisdiction\s+of)\b"
+                r"\b(governed\s+by\s+(?:and\s+construed\s+in\s+accordance\s+with\s+)?(?:the\s+)?(?:internal\s+)?laws\s+of|exclusive\s+jurisdiction\s+of\s+courts?|subject\s+to\s+(?:the\s+)?jurisdiction\s+of)\b"
             ],
             "negative_patterns": [],
-            "headings": ["governing law", "jurisdiction", "applicable law", "choice of law"]
+            "headings": ["governing law", "jurisdiction", "applicable law", "choice of law", "governing law and jurisdiction"]
         },
         "DISPUTE_RESOLUTION_ARBITRATION": {
             "patterns": [
@@ -188,6 +190,34 @@ class ClauseIntelligenceAgent(BaseAgent):
             ],
             "negative_patterns": [],
             "headings": ["arbitration", "dispute resolution", "arbitral tribunal"]
+        },
+        "JURY_TRIAL_WAIVER": {
+            "patterns": [
+                r"\b(waiver\s+of\s+jury\s+trial|jury\s+trial\s+waiver|waives?\s+(?:all\s+)?right\s+to\s+a\s+jury\s+trial|waive\s+any\s+right\s+to\s+jury\s+trial)\b"
+            ],
+            "negative_patterns": [],
+            "headings": ["jury trial waiver", "waiver of jury trial", "jury waiver"]
+        },
+        "SEVERABILITY": {
+            "patterns": [
+                r"\b(severability|severable|invalidity\s+of\s+any\s+provision|held\s+to\s+be\s+invalid\s+or\s+unenforceable)\b"
+            ],
+            "negative_patterns": [],
+            "headings": ["severability", "partial invalidity", "severability of provisions"]
+        },
+        "COMPLETE_AGREEMENT": {
+            "patterns": [
+                r"\b(entire\s+agreement|complete\s+understanding|supersedes\s+all\s+prior|complete\s+agreement|entire\s+agreement\s+and\s+amendments)\b"
+            ],
+            "negative_patterns": [],
+            "headings": ["entire agreement", "complete agreement", "integration", "whole agreement"]
+        },
+        "NOTICES_COMMUNICATIONS": {
+            "patterns": [
+                r"\b(notices\s+under\s+this\s+agreement|written\s+notice\s+shall\s+be\s+given|notices\s+shall\s+be\s+in\s+writing|addresses\s+for\s+notice)\b"
+            ],
+            "negative_patterns": [],
+            "headings": ["notices", "formal notices", "notices and formal communications"]
         }
     }
 
@@ -195,7 +225,7 @@ class ClauseIntelligenceAgent(BaseAgent):
         super().__init__(
             name="Clause Intelligence Agent",
             description="Extracts and categorizes clauses using domain-weighted multi-factor semantic classification and canonical taxonomy mapping.",
-            capabilities=["clause_extraction", "domain_weighted_classification", "canonical_taxonomy_mapping"]
+            capabilities=["clause_extraction", "domain_weighted_classification", "canonical_taxonomy_mapping", "evidence_grounding"]
         )
 
     def execute(self, context: Dict[str, Any]) -> AgentResult:
@@ -216,9 +246,9 @@ class ClauseIntelligenceAgent(BaseAgent):
             clean_text = f"{heading}\n{content}".strip()
             lower_block = clean_text.lower()
             
-            # Multi-factor score evaluation across candidate canonical categories
             best_cid = None
             best_score = -10.0
+            best_evidence = content[:200]
             
             for cid, candidate in self.CANDIDATE_PATTERNS.items():
                 score = 0.0
@@ -226,26 +256,27 @@ class ClauseIntelligenceAgent(BaseAgent):
                 primary_domains_for_cid = defn.get("primary_domains", [])
                 
                 # 1. Heading Evidence
+                heading_matched = False
                 for h_kw in candidate.get("headings", []):
                     if h_kw in heading.lower():
-                        score += 5.0
+                        score += 6.0
+                        heading_matched = True
                         break
                         
                 # 2. Domain / Playbook Affinity
                 if primary_domain in primary_domains_for_cid:
-                    score += 3.0
+                    score += 4.0
                 elif "REAL_ESTATE" in primary_domains_for_cid and primary_domain == "EMPLOYMENT_LABOR":
-                    # Strong negative bias against real estate categories inside employment documents
-                    score -= 8.0
+                    score -= 10.0
                 elif "REAL_ESTATE" in primary_domains_for_cid and primary_domain in ["CONFIDENTIALITY_NDA", "IP_SOFTWARE_TECH"]:
-                    score -= 6.0
+                    score -= 8.0
                     
                 # 3. Contextual Negative Indicators (Veto triggers)
                 has_negative = False
                 for neg_pat in candidate.get("negative_patterns", []):
                     if re.search(neg_pat, lower_block, re.IGNORECASE):
                         has_negative = True
-                        score -= 10.0
+                        score -= 12.0
                         break
                         
                 if has_negative:
@@ -256,14 +287,17 @@ class ClauseIntelligenceAgent(BaseAgent):
                     matches = list(re.finditer(pat, lower_block, re.IGNORECASE))
                     if matches:
                         score += len(matches) * 3.0
+                        # Capture accurate evidence snippet
+                        m_start = max(0, matches[0].start() - 20)
+                        m_end = min(len(clean_text), matches[0].end() + 80)
+                        best_evidence = clean_text[m_start:m_end].strip()
                         
-                if score > best_score and score >= 2.0:
+                if score > best_score and score >= 2.5:
                     best_score = score
                     best_cid = cid
                     
-            # Fallback if no specific rule met threshold
+            # Fallback if no specific pattern met threshold
             if not best_cid:
-                # Check if heading gives a clue
                 heading_canonical = normalize_to_canonical_id(heading)
                 if heading_canonical:
                     best_cid = heading_canonical
@@ -291,7 +325,8 @@ class ClauseIntelligenceAgent(BaseAgent):
                 "page": block.get("page", 1),
                 "risk": risk,
                 "dimension": dimension,
-                "confidence": min(0.96, max(0.60, 0.60 + (best_score * 0.04)))
+                "evidence": best_evidence,
+                "confidence": min(0.98, max(0.60, 0.60 + (best_score * 0.04)))
             }
             clauses.append(clause_obj)
             
@@ -306,9 +341,9 @@ class ClauseIntelligenceAgent(BaseAgent):
                     clause_type=display_type,
                     clause_text=content[:250],
                     page_number=block.get("page", 1),
-                    evidence=f"Heading: '{heading}' | Canonical: {best_cid} (Score: {best_score:.1f})",
+                    evidence=f"Heading: '{heading}' | Canonical: {best_cid} (Evidence: {best_evidence[:120]})",
                     claim=f"Identified {display_type} clause under {primary_domain} taxonomy.",
-                    reason=f"Structured classification matched canonical category '{best_cid}'.",
+                    reason=f"Structured multi-factor classification matched canonical category '{best_cid}'.",
                     recommendation="Review terms against standard market benchmarks." if risk in ["high", "medium"] else "Standard operative terms.",
                     source_type="DOCUMENT_TEXT",
                     verification_status="TEXT_SUPPORTED",
@@ -327,11 +362,11 @@ class ClauseIntelligenceAgent(BaseAgent):
         )
 
     def _segment_into_clause_blocks(self, text: str) -> List[Dict[str, Any]]:
-        """Segments raw text into structured clause units by numbered sections or paragraph headers."""
+        """Segments raw text into structured clause units by numbered sections, decimal sub-sections, or paragraph headers."""
         blocks: List[Dict[str, Any]] = []
         
-        # Regex to detect clause number headings e.g. "1. TITLE:", "  2. MORTGAGE:", "Clause 3:", "SECTION 4. COMPENSATION"
-        pattern = r"(?:^|\n)\s*(?:Clause\s+\d+[\.\:]?|\d+[\.\)]|\bSECTION\s+\d+[\.\:]?|\bARTICLE\s+[IVXLCDM\d]+[\.\:]?)\s*([A-Za-z\s&/,\-]{3,60}?)(?::|\n|\.\s+)"
+        # Regex to detect clause headings including decimal subsections without consuming following newline
+        pattern = r"(?:^|\n)\s*(?:Clause\s+\d+[\.\:]?|\d+(?:\.\d+)*\.?|\bSECTION\s+\d+(?:\.\d+)*[\.\:]?|\bARTICLE\s+[IVXLCDM\d]+[\.\:]?)\s+([A-Za-z0-9\s&/,\-]{2,60}?)(?::|\.\s+|\Z|(?=\n))"
         
         matches = list(re.finditer(pattern, text, re.MULTILINE))
         if len(matches) >= 2:

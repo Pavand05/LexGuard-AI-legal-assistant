@@ -270,12 +270,14 @@ class MultiAgentOrchestrator:
             "document_metadata": doc_res.data,
             "clauses": clauses,
             "risk_analysis": {
-                "overall_score": risk_data.data.get("overall_score", 30) if risk_data else 30,
+                "overall_score": (risk_data.data.get("overall_risk_score") or risk_data.data.get("overall_score", 20)) if risk_data else 20,
+                "overall_risk_score": (risk_data.data.get("overall_risk_score") or risk_data.data.get("overall_score", 20)) if risk_data else 20,
                 "overall_tier": risk_data.data.get("overall_tier", "LOW") if risk_data else "LOW",
                 "risk_label": risk_data.data.get("risk_label", "Low Exposure") if risk_data else "Low Exposure",
-                "dimensions": risk_data.data.get("dimensions", {}) if risk_data else {},
+                "dimensions": (risk_data.data.get("dimension_breakdown") or risk_data.data.get("dimensions", {})) if risk_data else {},
+                "dimension_breakdown": (risk_data.data.get("dimension_breakdown") or risk_data.data.get("dimensions", {})) if risk_data else {},
                 "dimension_status": risk_data.data.get("dimension_status", {}) if risk_data else {},
-                "legacy_risks": risk_data.data.get("legacy_risks", {"high": 0, "medium": 0, "low": 0, "total": 0}) if risk_data else {},
+                "legacy_risks": (risk_data.data.get("risks") or risk_data.data.get("legacy_risks", {"high": 0, "medium": 0, "low": 0, "total": 0})) if risk_data else {},
                 "definition": "Higher Risk (0-100) = Worse (Greater Legal / Financial Exposure)"
             },
             "contract_health": {
