@@ -104,15 +104,14 @@ class ContradictionDetectionAgent(BaseAgent):
 
         # Check for multi-city forum conflict
         forum_cities = []
-        for city in ["Bengaluru", "Bangalore", "Mysuru", "Mysore", "Mumbai", "Delhi", "Chennai", "Hyderabad", "Kolkata", "London", "Singapore"]:
+        for city in ["Bengaluru", "Bangalore", "Mysuru", "Mysore", "Mandya", "Chennai", "Madurai", "Mumbai", "Delhi", "Hyderabad", "Kolkata", "London", "Singapore"]:
             if re.search(rf"\b{city}\b", text, re.IGNORECASE):
-                # Normalize city name
                 norm = "Bengaluru" if city.lower() in ["bengaluru", "bangalore"] else ("Mysuru" if city.lower() in ["mysuru", "mysore"] else city)
                 if norm not in forum_cities:
                     forum_cities.append(norm)
 
         has_arbitration_clause = bool(re.search(r"\b(arbitration|arbitrator|arbitral\s+tribunal)\b", lower))
-        has_court_jurisdiction_clause = bool(re.search(r"\b(exclusive\s+jurisdiction\s+of\s+courts|subject\s+to\s+the\s+jurisdiction\s+of)\b", lower))
+        has_court_jurisdiction_clause = bool(re.search(r"\b(exclusive\s+jurisdiction\s+of\s+courts|subject\s+to\s+(?:the\s+)?(?:jurisdiction\s+of\s+)?(?:[A-Za-z\s]+\s+)?courts?|disputes\s+subject\s+to)\b", lower))
 
         if (len(forum_cities) >= 2 and (has_arbitration_clause or has_court_jurisdiction_clause)) or (has_exclusive_courts and has_arbitration_seat):
             conflicts_count += 1
@@ -130,6 +129,81 @@ class ContradictionDetectionAgent(BaseAgent):
                 claim="Dispute resolution mechanism is inconsistent.",
                 reason="Simultaneous designation of conflicting exclusive court jurisdictions and distinct arbitration venues can lead to protracted jurisdictional challenges under the Arbitration and Conciliation Act 1996.",
                 recommendation="Align dispute resolution into a single tiered clause: mediation followed by arbitration at a specified seat, with courts of that seat having exclusive supervisory jurisdiction.",
+                source_type="DOCUMENT_TEXT",
+                verification_status="TEXT_SUPPORTED",
+                confidence=0.92
+            ))
+
+        # =========================================================================
+        # 4. LEASE & USE RESTRICTION CONTRADICTIONS
+        # =========================================================================
+        # Sublease contradiction
+        has_sublease_prohibition = bool(re.search(r"(?:prohibited\s+from\s+(?:assigning\s+or\s+)?subleasing|no\s+subletting|shall\s+not\s+sublease)", lower))
+        has_sublease_permission = bool(re.search(r"(?:freely\s+sublet|permitted\s+to\s+sublet|may\s+sublet|sublease\s+permitted)", lower))
+        if has_sublease_prohibition and has_sublease_permission:
+            conflicts_count += 1
+            findings.append(AgentFindingModel(
+                id="contra-sublease-01",
+                agent="Contradiction Agent",
+                dimension="Legal",
+                category="Assignment & Sublease",
+                severity="HIGH",
+                risk_score=80,
+                clause_type="Sublease & Assignment Contradiction",
+                clause_text="Lease simultaneously prohibits assigning/subleasing AND permits freely subletting portion of the demised premises.",
+                page_number=1,
+                evidence="Clause prohibits subleasing while another clause permits subletting.",
+                claim="Sublease terms are mutually contradictory.",
+                reason="Conflicting sublease provisions create ambiguity regarding whether third-party occupancy triggers breach of lease and lease termination.",
+                recommendation="Harmonize sublease terms to specify clearly whether subletting requires prior written Lessor consent.",
+                source_type="DOCUMENT_TEXT",
+                verification_status="TEXT_SUPPORTED",
+                confidence=0.94
+            ))
+
+        # Structure / Construction contradiction
+        has_structure_prohibition = bool(re.search(r"(?:no\s+permanent(?:\s+concrete)?\s+structures|prohibited\s+from\s+erecting\s+permanent)", lower))
+        has_structure_permission = bool(re.search(r"(?:may\s+erect\s+permanent|permitted\s+to\s+construct|erect\s+permanent\s+multi-story)", lower))
+        if has_structure_prohibition and has_structure_permission:
+            conflicts_count += 1
+            findings.append(AgentFindingModel(
+                id="contra-struct-01",
+                agent="Contradiction Agent",
+                dimension="Operational",
+                category="Construction & Improvements",
+                severity="HIGH",
+                risk_score=75,
+                clause_type="Permitted Construction Contradiction",
+                clause_text="Agreement prohibits permanent concrete structures while another clause permits erecting permanent industrial buildings.",
+                page_number=1,
+                evidence="Contradictory covenants regarding erection of permanent structures.",
+                claim="Permitted construction covenants are contradictory.",
+                reason="Inconsistent building rights expose tenant to demolition risks and lessor claims of unauthorized structural alterations.",
+                recommendation="Clearly delineate permitted temporary vs permanent structures with prior architectural approval.",
+                source_type="DOCUMENT_TEXT",
+                verification_status="TEXT_SUPPORTED",
+                confidence=0.93
+            ))
+
+        # Renewal contradiction
+        has_renewal_right = bool(re.search(r"(?:unilateral\s+right\s+to\s+renew|option\s+to\s+renew|lessee\s+may\s+renew)", lower))
+        has_renewal_prohibition = bool(re.search(r"(?:strictly\s+expire[^\n.]*no\s+right\s+of\s+renewal|shall\s+not\s+be\s+renewed|no\s+option\s+to\s+renew)", lower))
+        if has_renewal_right and has_renewal_prohibition:
+            conflicts_count += 1
+            findings.append(AgentFindingModel(
+                id="contra-renew-01",
+                agent="Contradiction Agent",
+                dimension="Legal",
+                category="Lease Term & Renewal",
+                severity="HIGH",
+                risk_score=75,
+                clause_type="Lease Renewal Contradiction",
+                clause_text="Agreement grants unilateral renewal right while simultaneously stating the lease strictly expires with no right of renewal.",
+                page_number=1,
+                evidence="Conflicting clauses on lease tenure extension.",
+                claim="Lease tenure and renewal mechanism are contradictory.",
+                reason="Unresolved renewal rights create tenancy disputes upon expiry of the primary fixed term.",
+                recommendation="Specify unambiguous lease renewal mechanism with agreed notice period and revised rent escalation formulas.",
                 source_type="DOCUMENT_TEXT",
                 verification_status="TEXT_SUPPORTED",
                 confidence=0.92

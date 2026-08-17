@@ -97,10 +97,13 @@ class CitationVerificationAgent(BaseAgent):
         legal_claims_to_check = []
         for f in upstream_findings:
             if isinstance(f, dict):
-                f_claim = f.get("reason", "") + " " + f.get("claim", "")
+                f_reason = str(f.get("reason") or "")
+                f_claim_text = str(f.get("claim") or "")
             else:
-                f_claim = getattr(f, "reason", "") + " " + getattr(f, "claim", "")
+                f_reason = str(getattr(f, "reason", "") or "")
+                f_claim_text = str(getattr(f, "claim", "") or "")
                 
+            f_claim = f"{f_reason} {f_claim_text}".strip()
             if any(k in f_claim.lower() for k in ["section", "act", "void", "breach", "dpdp", "encumbrance"]):
                 legal_claims_to_check.append(f_claim[:250])
 

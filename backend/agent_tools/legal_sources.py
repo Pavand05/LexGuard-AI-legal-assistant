@@ -201,8 +201,11 @@ def verify_legal_claim(claim_text: str, cited_section: str = "", cited_act: str 
     has_statutory_reference = any(k in clean_claim for k in ["section", "act", "statute", "article", "order", "rule", "provision of"])
     
     for item in STATUTORY_KNOWLEDGE_BASE:
+        base_act = re.sub(r",?\s*\d{4}$", "", item["act"]).strip().lower()
+        full_act = item["act"].lower()
+        
         section_match = item["section"].lower() in clean_claim or (cited_section and cited_section.lower() in item["section"].lower())
-        act_match = item["act"].lower() in clean_claim or (cited_act and cited_act.lower() in item["act"].lower())
+        act_match = (full_act in clean_claim or base_act in clean_claim) or (cited_act and (cited_act.lower() in full_act or cited_act.lower() in base_act))
         
         if section_match and act_match:
             return {

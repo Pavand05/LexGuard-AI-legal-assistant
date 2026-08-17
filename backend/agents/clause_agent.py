@@ -68,6 +68,30 @@ class ClauseIntelligenceAgent(BaseAgent):
             "pattern": r"\b(schedule\s+of\s+property|schedule\s+property|survey\s+no|khata\s+no|site\s+no|bounded\s+on\s+the\s+east|bounded\s+on|measuring\s+east\s+to\s+west|square\s+feet|acres|guntas)\b"
         },
         {
+            "type": "Lease Term & Renewal",
+            "category": "Lease Term & Renewal",
+            "risk": "medium",
+            "dimension": "Legal",
+            "keywords": ["lease term", "term of lease", "fixed term of", "renewal", "option to renew", "expire", "tenure"],
+            "pattern": r"\b(lease\s+term|term\s+of\s+lease|fixed\s+term\s+of|unilateral\s+right\s+to\s+renew|renewal|expire\s+in)\b"
+        },
+        {
+            "type": "Assignment & Sublease",
+            "category": "Assignment & Sublease",
+            "risk": "high",
+            "dimension": "Legal",
+            "keywords": ["sublease", "sublet", "sub-lease", "assigning or subleasing", "assignment of lease"],
+            "pattern": r"\b(sublease|sublet|sub-lease|assigning\s+or\s+subleasing|subletting|assignment\s+of\s+lease)\b"
+        },
+        {
+            "type": "Permitted Use & Restrictions",
+            "category": "Permitted Use & Restrictions",
+            "risk": "medium",
+            "dimension": "Operational",
+            "keywords": ["permitted use", "demised land shall be used", "solely for", "no permanent concrete structures", "permanent multi-story"],
+            "pattern": r"\b(permitted\s+use|used\s+solely\s+for|no\s+permanent\s+concrete\s+structures|erect\s+permanent|structures?)\b"
+        },
+        {
             "type": "Default & Forfeiture",
             "category": "Default & Forfeiture",
             "risk": "high",
