@@ -1,8 +1,9 @@
 """
 Risk Assessment Agent
-Calculates documented multi-dimensional risk scores (Legal, Financial, Compliance, Privacy, Operational, IP).
-Formula:
-  Overall Risk = sum(w_i * Dimension_Score_i)
+Calculates documented, explainable multi-dimensional risk scores (Legal, Financial, Compliance, Privacy, Operational, IP).
+Distinguishes:
+- Contract Risk Score (0 = Low Exposure, 100 = Critical Risk / Extreme Liability)
+- Transparent formula based on finding severities, financial exposure, and contradictory terms.
 """
 from typing import Dict, Any, List
 from .base_agent import BaseAgent, AgentResult, AgentFindingModel
@@ -11,62 +12,81 @@ from .base_agent import BaseAgent, AgentResult, AgentFindingModel
 class RiskAssessmentAgent(BaseAgent):
     DIMENSION_WEIGHTS = {
         "Legal": 0.25,
-        "Financial": 0.20,
+        "Financial": 0.25,
         "Compliance": 0.20,
-        "Privacy": 0.15,
-        "Operational": 0.10,
-        "IP": 0.10
+        "Operational": 0.15,
+        "Privacy": 0.10,
+        "IP": 0.05
     }
 
     def __init__(self):
         super().__init__(
             name="Risk Assessment Agent",
-            description="Evaluates contractual risk across 6 specific dimensions with explainable mathematical scoring.",
-            capabilities=["multi_dimensional_risk", "score_computation", "severity_tallying"]
+            description="Evaluates contractual risk across 6 specific dimensions using deterministic severity weighting and exposure modeling.",
+            capabilities=["multi_dimensional_risk", "score_computation", "severity_weighting", "exposure_analysis"]
         )
 
     def execute(self, context: Dict[str, Any]) -> AgentResult:
         clauses = context.get("clauses", [])
+        upstream_findings = context.get("findings", [])
         
-        # Initialize dimension aggregates
-        dim_scores = {dim: {"high": 0, "medium": 0, "low": 0, "total": 0} for dim in self.DIMENSION_WEIGHTS}
+        # Aggregate all items by dimension and severity
+        dim_stats = {dim: {"critical": 0, "high": 0, "medium": 0, "low": 0, "total": 0} for dim in self.DIMENSION_WEIGHTS}
         
         for c in clauses:
             dim = c.get("dimension", "Legal")
             risk = c.get("risk", "low").lower()
-            if dim in dim_scores:
-                dim_scores[dim]["total"] += 1
-                if risk in dim_scores[dim]:
-                    dim_scores[dim][risk] += 1
+            if dim in dim_stats:
+                dim_stats[dim]["total"] += 1
+                if risk in dim_stats[dim]:
+                    dim_stats[dim][risk] += 1
+
+        for f in upstream_findings:
+            if isinstance(f, dict):
+                dim = f.get("dimension", "Legal")
+                sev = f.get("severity", "LOW").lower()
+            else:
+                dim = getattr(f, "dimension", "Legal")
+                sev = getattr(f, "severity", "LOW").lower()
+                
+            if dim in dim_stats:
+                dim_stats[dim]["total"] += 1
+                if sev in dim_stats[dim]:
+                    dim_stats[dim][sev] += 1
 
         dimension_breakdown = {}
         weighted_overall = 0.0
         
-        for dim, counts in dim_scores.items():
-            # Dimension score formula: 100 * (3*high + 1.5*med + 0.5*low) / max(1, 3*total) capped at 100
-            # If no clauses in dimension, base baseline = 20
-            if counts["total"] == 0:
-                score = 25
-            else:
-                score = int(min(100, (counts["high"] * 85 + counts["medium"] * 50 + counts["low"] * 20) / counts["total"]))
-            
+        for dim, counts in dim_stats.items():
+            # Formula:
+            # Base = 15
+            # Critical findings: +35 each
+            # High findings: +20 each
+            # Medium findings: +10 each
+            # Low findings: +2 each
+            # Capped at 100
+            score = 15 + (counts["critical"] * 35) + (counts["high"] * 20) + (counts["medium"] * 10) + (counts["low"] * 2)
+            score = max(10, min(100, score))
             dimension_breakdown[dim] = score
             weighted_overall += score * self.DIMENSION_WEIGHTS[dim]
 
-        overall_score = int(round(weighted_overall))
+        overall_risk_score = int(round(weighted_overall))
         
-        # Determine overall classification
-        if overall_score >= 65:
-            overall_tier = "HIGH"
-        elif overall_score >= 40:
+        # Risk tier classification
+        if overall_risk_score >= 70:
+            overall_tier = "CRITICAL / HIGH"
+            risk_label = "Severe Legal & Financial Exposure"
+        elif overall_risk_score >= 45:
             overall_tier = "MEDIUM"
+            risk_label = "Moderate Contractual Exposure (Negotiable)"
         else:
             overall_tier = "LOW"
+            risk_label = "Low Exposure / Standard Terms"
 
-        # Calculate legacy counts for full backward compatibility
-        high_cnt = sum(1 for c in clauses if c.get("risk") == "high")
-        med_cnt = sum(1 for c in clauses if c.get("risk") == "medium")
-        low_cnt = sum(1 for c in clauses if c.get("risk") == "low")
+        # Legacy risk tallies for backward compatibility
+        high_cnt = sum(c["high"] + c["critical"] for c in dim_stats.values())
+        med_cnt = sum(c["medium"] for c in dim_stats.values())
+        low_cnt = sum(c["low"] for c in dim_stats.values())
         
         legacy_risks = {
             "high": high_cnt,
@@ -76,29 +96,36 @@ class RiskAssessmentAgent(BaseAgent):
         }
 
         finding = AgentFindingModel(
+            id="risk-summary-01",
+            agent="Risk Assessment Agent",
             dimension="Financial",
-            risk_level=overall_tier,
-            risk_score=overall_score,
-            clause_type="Overall Risk Assessment",
-            clause_text=f"Aggregated Contract Risk Score: {overall_score}/100 across {len(clauses)} clauses.",
+            category="Risk Calculation",
+            severity=overall_tier.split(" ")[0],
+            risk_score=overall_risk_score,
+            clause_type="Deterministic Risk Synthesis",
+            clause_text=f"Contract Risk Score: {overall_risk_score}/100 [{overall_tier}] ({risk_label}).",
             page_number=1,
-            reason=f"Overall risk calculated via weighted legal formula: Legal ({dimension_breakdown['Legal']}/100), Financial ({dimension_breakdown['Financial']}/100), Compliance ({dimension_breakdown['Compliance']}/100).",
-            recommendation="Focus legal negotiation on high-exposure liability and uncapped damages clauses.",
-            citation_status="SUPPORTED",
-            confidence=0.92
+            evidence=f"Aggregated from {high_cnt} high/critical items, {med_cnt} medium items across {len(clauses)} clauses.",
+            claim=f"Calculated overall risk is {overall_risk_score}/100.",
+            reason=f"Multi-dimensional calculation: Legal ({dimension_breakdown['Legal']}/100), Financial ({dimension_breakdown['Financial']}/100), Compliance ({dimension_breakdown['Compliance']}/100), Operational ({dimension_breakdown['Operational']}/100).",
+            recommendation="Address critical title, encumbrance, and payment contradictions prior to deed execution." if overall_risk_score >= 50 else "Maintain standard contractual protections.",
+            source_type="AI_INFERENCE",
+            verification_status="TEXT_SUPPORTED",
+            confidence=0.94
         )
 
         return AgentResult(
             agent_name=self.name,
             status="success",
-            confidence=0.92,
-            summary=f"Contract Risk Score: {overall_score}/100 ({overall_tier} Risk). High: {high_cnt}, Med: {med_cnt}, Low: {low_cnt}.",
+            confidence=0.94,
+            summary=f"Contract Risk Score: {overall_risk_score}/100 ({overall_tier} Risk). {risk_label}.",
             findings=[finding],
             data={
-                "overall_score": overall_score,
+                "overall_score": overall_risk_score,
                 "overall_tier": overall_tier,
+                "risk_label": risk_label,
                 "dimensions": dimension_breakdown,
                 "legacy_risks": legacy_risks,
-                "formula": "sum(weight_i * dimension_i)"
+                "scoring_formula": "sum(weight_dim * [15 + 35*Critical + 20*High + 10*Medium + 2*Low])"
             }
         )

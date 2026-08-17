@@ -3,6 +3,7 @@ Central Multi-Agent Orchestrator (LexGuard-MA)
 Supports Single-Agent Baseline, Sequential, Parallel, and Debate workflows.
 Enforces structured agent communication, observability traces, and Human-in-the-loop triggers.
 """
+import re
 import time
 import uuid
 from typing import Dict, Any, List, Optional
@@ -59,7 +60,7 @@ class MultiAgentOrchestrator:
         run_id = f"run-{uuid.uuid4().hex[:10]}"
         agent_traces: List[Dict[str, Any]] = []
         agent_messages: List[Dict[str, Any]] = []
-        all_findings: List[Dict[str, Any]] = []
+        all_raw_findings: List[Dict[str, Any]] = []
         results_by_agent: Dict[str, AgentResult] = {}
 
         def record_agent_step(result: AgentResult, sender: str, receiver: str = "orchestrator"):
@@ -76,7 +77,9 @@ class MultiAgentOrchestrator:
             for f in result.findings:
                 f_dict = f.model_dump()
                 f_dict["agent_name"] = result.agent_name
-                all_findings.append(f_dict)
+                if not f_dict.get("agent"):
+                    f_dict["agent"] = result.agent_name
+                all_raw_findings.append(f_dict)
                 
             msg = AgentMessage(
                 run_id=run_id,
@@ -101,10 +104,10 @@ class MultiAgentOrchestrator:
 
         # ── 1. SINGLE AGENT BASELINE WORKFLOW ───────────────────────────────
         if workflow_type == "single":
-            # Baseline uses single doc & clause processing
             doc_res = self.doc_agent.run(context)
             record_agent_step(doc_res, sender="Document Intelligence Agent")
-            context["document_type"] = doc_res.data.get("document_type", "Commercial Contract")
+            context["document_type"] = doc_res.data.get("document_type", "OTHER")
+            context["document_metadata"] = doc_res.data
             context["parties"] = doc_res.data.get("parties", [])
             context["jurisdiction"] = doc_res.data.get("jurisdiction", "India")
 
@@ -120,7 +123,8 @@ class MultiAgentOrchestrator:
             # Stage 1: Document Intelligence
             doc_res = self.doc_agent.run(context)
             record_agent_step(doc_res, sender="Document Intelligence Agent")
-            context["document_type"] = doc_res.data.get("document_type", "Commercial Contract")
+            context["document_type"] = doc_res.data.get("document_type", "OTHER")
+            context["document_metadata"] = doc_res.data
             context["parties"] = doc_res.data.get("parties", [])
             context["jurisdiction"] = doc_res.data.get("jurisdiction", "India")
 
@@ -128,6 +132,7 @@ class MultiAgentOrchestrator:
             clause_res = self.clause_agent.run(context)
             record_agent_step(clause_res, sender="Clause Intelligence Agent")
             context["clauses"] = clause_res.data.get("clauses", [])
+            context["findings"] = all_raw_findings.copy()
 
             # Stage 3: Concurrent execution of independent agents
             parallel_agents = [
@@ -148,7 +153,7 @@ class MultiAgentOrchestrator:
             research_res = self.research_agent.run(context)
             record_agent_step(research_res, sender="Legal Research Agent")
 
-            context["findings"] = all_findings.copy()
+            context["findings"] = all_raw_findings.copy()
             citation_res = self.citation_agent.run(context)
             record_agent_step(citation_res, sender="Citation Verification Agent")
 
@@ -167,19 +172,17 @@ class MultiAgentOrchestrator:
 
         # ── 3. SEQUENTIAL MULTI-AGENT WORKFLOW ──────────────────────────────
         elif workflow_type == "sequential":
-            # Stage 1: Document Agent
             doc_res = self.doc_agent.run(context)
             record_agent_step(doc_res, sender="Document Intelligence Agent")
-            context["document_type"] = doc_res.data.get("document_type", "Commercial Contract")
+            context["document_type"] = doc_res.data.get("document_type", "OTHER")
+            context["document_metadata"] = doc_res.data
             context["parties"] = doc_res.data.get("parties", [])
             context["jurisdiction"] = doc_res.data.get("jurisdiction", "India")
 
-            # Stage 2: Clause Agent
             clause_res = self.clause_agent.run(context)
             record_agent_step(clause_res, sender="Clause Intelligence Agent")
             context["clauses"] = clause_res.data.get("clauses", [])
 
-            # Sequential pipeline
             for agent in [
                 self.risk_agent,
                 self.compliance_agent,
@@ -195,7 +198,7 @@ class MultiAgentOrchestrator:
                 if agent == self.negotiation_agent:
                     context["negotiation_items"] = res.data.get("negotiation_items", [])
 
-            citation_res = self.citation_agent.run({"findings": all_findings.copy()})
+            citation_res = self.citation_agent.run({"text": document_text, "findings": all_raw_findings.copy()})
             record_agent_step(citation_res, sender="Citation Verification Agent")
 
             redline_res = self.redline_agent.run(context)
@@ -207,10 +210,10 @@ class MultiAgentOrchestrator:
 
         # ── 4. DEBATE / CRITIC WORKFLOW ─────────────────────────────────────
         elif workflow_type == "debate":
-            # Stage 1: Base Analysis
             doc_res = self.doc_agent.run(context)
             record_agent_step(doc_res, sender="Document Intelligence Agent")
-            context["document_type"] = doc_res.data.get("document_type", "Commercial Contract")
+            context["document_type"] = doc_res.data.get("document_type", "OTHER")
+            context["document_metadata"] = doc_res.data
             context["parties"] = doc_res.data.get("parties", [])
             context["jurisdiction"] = doc_res.data.get("jurisdiction", "India")
 
@@ -224,17 +227,24 @@ class MultiAgentOrchestrator:
             comp_res = self.compliance_agent.run(context)
             record_agent_step(comp_res, sender="Compliance Agent (Analyst)")
 
-            # Critic Phase: Citation Agent challenges claims
-            context["findings"] = all_findings.copy()
-            citation_res = self.citation_agent.run(context)
+            citation_res = self.citation_agent.run({"text": document_text, "findings": all_raw_findings.copy()})
             record_agent_step(citation_res, sender="Citation Verification Agent (Critic)")
 
-            # Re-evaluation by Reviewer
             context["agent_results"] = results_by_agent
             reviewer_res = self.reviewer_agent.run(context)
             record_agent_step(reviewer_res, sender="Reviewer Agent (Adjudicator)")
 
         total_duration_ms = int((time.time() - start_overall) * 1000)
+
+        # Deduplicate all raw findings for clean UI display
+        deduplicated_findings: List[Dict[str, Any]] = []
+        seen_fingerprints = set()
+        for f in all_raw_findings:
+            key = (f.get("agent_name", "") + f.get("clause_type", "") + f.get("reason", "")[:35]).lower()
+            if key in seen_fingerprints:
+                continue
+            seen_fingerprints.add(key)
+            deduplicated_findings.append(f)
 
         # Aggregate final payload
         risk_data = results_by_agent.get("Risk Assessment Agent")
@@ -242,6 +252,8 @@ class MultiAgentOrchestrator:
         doc_data = results_by_agent.get("Document Intelligence Agent")
         clause_data = results_by_agent.get("Clause Intelligence Agent")
         comp_data = results_by_agent.get("Compliance Agent")
+        contra_data = results_by_agent.get("Contradiction Agent")
+        citation_data = results_by_agent.get("Citation Verification Agent")
         obligations_data = results_by_agent.get("Obligation Extraction Agent")
         redlines_data = results_by_agent.get("Redlining Agent")
         privacy_data = results_by_agent.get("Privacy & PII Agent")
@@ -257,22 +269,28 @@ class MultiAgentOrchestrator:
             "risk_analysis": {
                 "overall_score": risk_data.data.get("overall_score", 30) if risk_data else 30,
                 "overall_tier": risk_data.data.get("overall_tier", "LOW") if risk_data else "LOW",
+                "risk_label": risk_data.data.get("risk_label", "Low Exposure") if risk_data else "Low Exposure",
                 "dimensions": risk_data.data.get("dimensions", {}) if risk_data else {},
-                "legacy_risks": risk_data.data.get("legacy_risks", {"high": 0, "medium": 0, "low": 0, "total": 0}) if risk_data else {}
+                "legacy_risks": risk_data.data.get("legacy_risks", {"high": 0, "medium": 0, "low": 0, "total": 0}) if risk_data else {},
+                "definition": "Higher Risk (0-100) = Worse (Greater Legal / Financial Exposure)"
             },
             "contract_health": {
                 "score": reviewer_data.data.get("health_score", 85) if reviewer_data else 85,
-                "grade": reviewer_data.data.get("health_grade", "A (Standard)") if reviewer_data else "A",
+                "grade": reviewer_data.data.get("health_grade", "Grade A") if reviewer_data else "Grade A",
+                "description": reviewer_data.data.get("health_description", "Standard enforceability") if reviewer_data else "Standard enforceability",
                 "needs_human_review": reviewer_data.data.get("needs_human_review", False) if reviewer_data else False,
-                "disagreements": reviewer_data.data.get("disagreements", []) if reviewer_data else []
+                "disagreements": reviewer_data.data.get("disagreements", []) if reviewer_data else [],
+                "definition": "Higher Health (0-100) = Better (Greater Protection & Enforceability)"
             },
             "compliance": comp_data.data if comp_data else {},
+            "contradictions": contra_data.data if contra_data else {},
+            "citations": citation_data.data if citation_data else {},
             "obligations": obligations_data.data.get("obligations", []) if obligations_data else [],
             "redlines": redlines_data.data.get("redlines", []) if redlines_data else [],
             "privacy": privacy_data.data if privacy_data else {},
             "agent_traces": agent_traces,
             "agent_messages": agent_messages,
-            "findings": all_findings
+            "findings": deduplicated_findings
         }
         return final_response
 
