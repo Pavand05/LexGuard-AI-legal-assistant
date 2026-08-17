@@ -1,7 +1,11 @@
 """
 Central Multi-Agent Orchestrator (LexGuard-MA)
 Supports Single-Agent Baseline, Sequential, Parallel, and Debate workflows.
-Enforces structured agent communication, observability traces, and Human-in-the-loop triggers.
+Features:
+- Dynamic Agent Routing Layer (AgentRouter)
+- Pluggable Domain Playbooks
+- Open-Set Document Taxonomy Support
+- Observability Traces and Human-in-the-Loop Triggers
 """
 import re
 import time
@@ -24,11 +28,12 @@ from .negotiation_agent import NegotiationStrategyAgent
 from .redlining_agent import RedliningIntelligenceAgent
 from .privacy_agent import PrivacyIntelligenceAgent
 from .reviewer_agent import ReviewerCriticAgent
+from .router import AgentRouter
 
 
 class MultiAgentOrchestrator:
     def __init__(self):
-        # Initialize all specialized agents
+        # Initialize all 13 specialized agents
         self.doc_agent = DocumentIntelligenceAgent()
         self.clause_agent = ClauseIntelligenceAgent()
         self.risk_agent = RiskAssessmentAgent()
@@ -53,7 +58,7 @@ class MultiAgentOrchestrator:
         document_id: Optional[int] = None
     ) -> Dict[str, Any]:
         """
-        Execute the specified multi-agent workflow over the legal document.
+        Execute dynamic multi-agent workflow over any legal document.
         Returns full trace, agent steps, structured findings, and contract metrics.
         """
         start_overall = time.time()
@@ -102,107 +107,116 @@ class MultiAgentOrchestrator:
             "run_id": run_id
         }
 
+        # ── STAGE 1: DOCUMENT INTELLIGENCE & OPEN-SET CLASSIFICATION ───────
+        doc_res = self.doc_agent.run(context)
+        record_agent_step(doc_res, sender="Document Intelligence Agent")
+        
+        doc_type = doc_res.data.get("document_type", "OTHER_LEGAL_DOCUMENT")
+        detected_domains = doc_res.data.get("detected_domains", ["GENERAL_COMMERCIAL"])
+        classification_confidence = doc_res.data.get("classification_confidence", 0.85)
+        
+        context["document_type"] = doc_type
+        context["document_metadata"] = doc_res.data
+        context["detected_domains"] = detected_domains
+        context["parties"] = doc_res.data.get("parties", [])
+        context["jurisdiction"] = doc_res.data.get("court_jurisdiction", "India")
+        context["applicable_law"] = doc_res.data.get("applicable_law", "Laws of India")
+
+        # ── STAGE 2: CLAUSE INTELLIGENCE & STRUCTURE EXTRACTION ───────────
+        clause_res = self.clause_agent.run(context)
+        record_agent_step(clause_res, sender="Clause Intelligence Agent")
+        clauses = clause_res.data.get("clauses", [])
+        context["clauses"] = clauses
+        context["findings"] = all_raw_findings.copy()
+
+        # ── STAGE 3: DYNAMIC AGENT ROUTING ─────────────────────────────────
+        routing_info = AgentRouter.route_agents(
+            document_type=doc_type,
+            detected_domains=detected_domains,
+            jurisdiction=context["jurisdiction"],
+            clauses=clauses,
+            privacy_mode=privacy_mode,
+            confidence=classification_confidence
+        )
+        context["routing_info"] = routing_info
+        active_agent_names = set(routing_info["active_agents"])
+
         # ── 1. SINGLE AGENT BASELINE WORKFLOW ───────────────────────────────
         if workflow_type == "single":
-            doc_res = self.doc_agent.run(context)
-            record_agent_step(doc_res, sender="Document Intelligence Agent")
-            context["document_type"] = doc_res.data.get("document_type", "OTHER")
-            context["document_metadata"] = doc_res.data
-            context["parties"] = doc_res.data.get("parties", [])
-            context["jurisdiction"] = doc_res.data.get("jurisdiction", "India")
-
-            clause_res = self.clause_agent.run(context)
-            record_agent_step(clause_res, sender="Clause Intelligence Agent")
-            context["clauses"] = clause_res.data.get("clauses", [])
-
             risk_res = self.risk_agent.run(context)
             record_agent_step(risk_res, sender="Risk Assessment Agent")
 
         # ── 2. PARALLEL MULTI-AGENT WORKFLOW (Default High-Performance) ─────
         elif workflow_type == "parallel":
-            # Stage 1: Document Intelligence
-            doc_res = self.doc_agent.run(context)
-            record_agent_step(doc_res, sender="Document Intelligence Agent")
-            context["document_type"] = doc_res.data.get("document_type", "OTHER")
-            context["document_metadata"] = doc_res.data
-            context["parties"] = doc_res.data.get("parties", [])
-            context["jurisdiction"] = doc_res.data.get("jurisdiction", "India")
-
-            # Stage 2: Clause Intelligence
-            clause_res = self.clause_agent.run(context)
-            record_agent_step(clause_res, sender="Clause Intelligence Agent")
-            context["clauses"] = clause_res.data.get("clauses", [])
-            context["findings"] = all_raw_findings.copy()
-
-            # Stage 3: Concurrent execution of independent agents
-            parallel_agents = [
-                self.risk_agent,
-                self.compliance_agent,
-                self.contradiction_agent,
-                self.missing_agent,
-                self.obligation_agent,
-                self.privacy_agent
+            # Concurrent execution of independent analytical agents
+            parallel_candidates = [
+                (self.risk_agent, "Risk Assessment Agent"),
+                (self.compliance_agent, "Compliance Agent"),
+                (self.contradiction_agent, "Contradiction Agent"),
+                (self.missing_agent, "Missing Clause Agent"),
+                (self.obligation_agent, "Obligation Extraction Agent"),
+                (self.privacy_agent, "Privacy & PII Agent")
             ]
+            # Filter by dynamic routing
+            selected_parallel = [agent for agent, name in parallel_candidates if name in active_agent_names]
+            
             with ThreadPoolExecutor(max_workers=6) as executor:
-                future_to_agent = {executor.submit(agent.run, context): agent for agent in parallel_agents}
+                future_to_agent = {executor.submit(agent.run, context): agent for agent in selected_parallel}
                 for future in as_completed(future_to_agent):
                     res = future.result()
                     record_agent_step(res, sender=res.agent_name)
 
-            # Stage 4: Legal Research & Citation Verification
-            research_res = self.research_agent.run(context)
-            record_agent_step(research_res, sender="Legal Research Agent")
+            # Legal Research & Citation Verification
+            if "Legal Research Agent" in active_agent_names:
+                research_res = self.research_agent.run(context)
+                record_agent_step(research_res, sender="Legal Research Agent")
 
             context["findings"] = all_raw_findings.copy()
-            citation_res = self.citation_agent.run(context)
-            record_agent_step(citation_res, sender="Citation Verification Agent")
+            if "Citation Verification Agent" in active_agent_names:
+                citation_res = self.citation_agent.run(context)
+                record_agent_step(citation_res, sender="Citation Verification Agent")
 
-            # Stage 5: Negotiation & Redlining
-            neg_res = self.negotiation_agent.run(context)
-            record_agent_step(neg_res, sender="Negotiation Agent")
-            context["negotiation_items"] = neg_res.data.get("negotiation_items", [])
+            # Negotiation & Redlining
+            if "Negotiation Agent" in active_agent_names:
+                neg_res = self.negotiation_agent.run(context)
+                record_agent_step(neg_res, sender="Negotiation Agent")
+                context["negotiation_items"] = neg_res.data.get("negotiation_items", [])
 
-            redline_res = self.redline_agent.run(context)
-            record_agent_step(redline_res, sender="Redlining Agent")
+            if "Redlining Agent" in active_agent_names:
+                redline_res = self.redline_agent.run(context)
+                record_agent_step(redline_res, sender="Redlining Agent")
 
-            # Stage 6: Consensus Reviewer & Health Scoring
+            # Reviewer & Critic Agent (Cross-Agent Consensus)
             context["agent_results"] = results_by_agent
             reviewer_res = self.reviewer_agent.run(context)
             record_agent_step(reviewer_res, sender="Reviewer Agent")
 
         # ── 3. SEQUENTIAL MULTI-AGENT WORKFLOW ──────────────────────────────
         elif workflow_type == "sequential":
-            doc_res = self.doc_agent.run(context)
-            record_agent_step(doc_res, sender="Document Intelligence Agent")
-            context["document_type"] = doc_res.data.get("document_type", "OTHER")
-            context["document_metadata"] = doc_res.data
-            context["parties"] = doc_res.data.get("parties", [])
-            context["jurisdiction"] = doc_res.data.get("jurisdiction", "India")
+            sequential_pipeline = [
+                (self.risk_agent, "Risk Assessment Agent"),
+                (self.compliance_agent, "Compliance Agent"),
+                (self.contradiction_agent, "Contradiction Agent"),
+                (self.missing_agent, "Missing Clause Agent"),
+                (self.research_agent, "Legal Research Agent"),
+                (self.obligation_agent, "Obligation Extraction Agent"),
+                (self.privacy_agent, "Privacy & PII Agent"),
+                (self.negotiation_agent, "Negotiation Agent")
+            ]
+            for agent, name in sequential_pipeline:
+                if name in active_agent_names:
+                    res = agent.run(context)
+                    record_agent_step(res, sender=res.agent_name)
+                    if agent == self.negotiation_agent:
+                        context["negotiation_items"] = res.data.get("negotiation_items", [])
 
-            clause_res = self.clause_agent.run(context)
-            record_agent_step(clause_res, sender="Clause Intelligence Agent")
-            context["clauses"] = clause_res.data.get("clauses", [])
+            if "Citation Verification Agent" in active_agent_names:
+                citation_res = self.citation_agent.run({"text": document_text, "findings": all_raw_findings.copy()})
+                record_agent_step(citation_res, sender="Citation Verification Agent")
 
-            for agent in [
-                self.risk_agent,
-                self.compliance_agent,
-                self.contradiction_agent,
-                self.missing_agent,
-                self.research_agent,
-                self.obligation_agent,
-                self.privacy_agent,
-                self.negotiation_agent
-            ]:
-                res = agent.run(context)
-                record_agent_step(res, sender=res.agent_name)
-                if agent == self.negotiation_agent:
-                    context["negotiation_items"] = res.data.get("negotiation_items", [])
-
-            citation_res = self.citation_agent.run({"text": document_text, "findings": all_raw_findings.copy()})
-            record_agent_step(citation_res, sender="Citation Verification Agent")
-
-            redline_res = self.redline_agent.run(context)
-            record_agent_step(redline_res, sender="Redlining Agent")
+            if "Redlining Agent" in active_agent_names:
+                redline_res = self.redline_agent.run(context)
+                record_agent_step(redline_res, sender="Redlining Agent")
 
             context["agent_results"] = results_by_agent
             reviewer_res = self.reviewer_agent.run(context)
@@ -210,17 +224,6 @@ class MultiAgentOrchestrator:
 
         # ── 4. DEBATE / CRITIC WORKFLOW ─────────────────────────────────────
         elif workflow_type == "debate":
-            doc_res = self.doc_agent.run(context)
-            record_agent_step(doc_res, sender="Document Intelligence Agent")
-            context["document_type"] = doc_res.data.get("document_type", "OTHER")
-            context["document_metadata"] = doc_res.data
-            context["parties"] = doc_res.data.get("parties", [])
-            context["jurisdiction"] = doc_res.data.get("jurisdiction", "India")
-
-            clause_res = self.clause_agent.run(context)
-            record_agent_step(clause_res, sender="Clause Intelligence Agent")
-            context["clauses"] = clause_res.data.get("clauses", [])
-
             risk_res = self.risk_agent.run(context)
             record_agent_step(risk_res, sender="Risk Assessment Agent (Analyst)")
 
@@ -249,14 +252,13 @@ class MultiAgentOrchestrator:
         # Aggregate final payload
         risk_data = results_by_agent.get("Risk Assessment Agent")
         reviewer_data = results_by_agent.get("Reviewer Agent")
-        doc_data = results_by_agent.get("Document Intelligence Agent")
-        clause_data = results_by_agent.get("Clause Intelligence Agent")
         comp_data = results_by_agent.get("Compliance Agent")
         contra_data = results_by_agent.get("Contradiction Agent")
         citation_data = results_by_agent.get("Citation Verification Agent")
         obligations_data = results_by_agent.get("Obligation Extraction Agent")
         redlines_data = results_by_agent.get("Redlining Agent")
         privacy_data = results_by_agent.get("Privacy & PII Agent")
+        missing_data = results_by_agent.get("Missing Clause Agent")
 
         final_response = {
             "run_id": run_id,
@@ -264,13 +266,15 @@ class MultiAgentOrchestrator:
             "status": "completed",
             "total_duration_ms": total_duration_ms,
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "document_metadata": doc_data.data if doc_data else {},
-            "clauses": clause_data.data.get("clauses", []) if clause_data else [],
+            "routing": routing_info,
+            "document_metadata": doc_res.data,
+            "clauses": clauses,
             "risk_analysis": {
                 "overall_score": risk_data.data.get("overall_score", 30) if risk_data else 30,
                 "overall_tier": risk_data.data.get("overall_tier", "LOW") if risk_data else "LOW",
                 "risk_label": risk_data.data.get("risk_label", "Low Exposure") if risk_data else "Low Exposure",
                 "dimensions": risk_data.data.get("dimensions", {}) if risk_data else {},
+                "dimension_status": risk_data.data.get("dimension_status", {}) if risk_data else {},
                 "legacy_risks": risk_data.data.get("legacy_risks", {"high": 0, "medium": 0, "low": 0, "total": 0}) if risk_data else {},
                 "definition": "Higher Risk (0-100) = Worse (Greater Legal / Financial Exposure)"
             },
@@ -282,6 +286,7 @@ class MultiAgentOrchestrator:
                 "disagreements": reviewer_data.data.get("disagreements", []) if reviewer_data else [],
                 "definition": "Higher Health (0-100) = Better (Greater Protection & Enforceability)"
             },
+            "missing_clauses": missing_data.data if missing_data else {},
             "compliance": comp_data.data if comp_data else {},
             "contradictions": contra_data.data if contra_data else {},
             "citations": citation_data.data if citation_data else {},
