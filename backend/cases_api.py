@@ -207,7 +207,9 @@ def upload_case_document(case_id):
     file.save(file_path)
 
     case_doc = CaseDocument(
+        # pyrefly: ignore [unexpected-keyword]
         case_id=case_id,
+        # pyrefly: ignore [unexpected-keyword]
         user_id=user_id,
         filename=os.path.join('cases', str(case_id), stored_name),
         original_name=file.filename

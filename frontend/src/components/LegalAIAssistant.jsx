@@ -984,7 +984,7 @@ const LegalAIAssistant = ({ user, token, onLogout }) => {
           {sidebarTab === 'analyzer' && (
             <div className="space-y-6">
               {/* Document Analyzer Sub-navigation */}
-              <div className="flex border-b border-slate-800 overflow-x-auto gap-4 pb-0.5">
+              <div className="flex border-b border-slate-800 overflow-x-auto gap-4 pb-0.5 no-scrollbar">
                 {[
                   { id: 'upload',     label: 'Upload Document',   icon: Upload },
                   { id: 'analysis',   label: 'Risk Analysis Report',  icon: FileText },

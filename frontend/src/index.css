@@ -14,4 +14,29 @@
   body {
     @apply bg-slate-950 text-slate-200;
   }
+
+  /* Custom subtle dark scrollbars across entire application */
+  ::-webkit-scrollbar {
+    height: 5px;
+    width: 5px;
+  }
+  ::-webkit-scrollbar-track {
+    background: rgba(15, 23, 42, 0.4);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.2);
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(139, 92, 246, 0.4);
+  }
+
+  /* Utility to hide scrollbars while preserving scrolling */
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
 }

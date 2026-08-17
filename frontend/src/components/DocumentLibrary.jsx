@@ -199,7 +199,17 @@ export default function DocumentLibrary({ token, onLoadDocument }) {
                 )}
               </div>
               {doc.summary && (
-                <p style={{ color: '#94a3b8', fontSize: '12px', marginTop: '8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <p style={{
+                  color: '#94a3b8',
+                  fontSize: '12px',
+                  marginTop: '8px',
+                  lineHeight: '1.5',
+                  wordBreak: 'break-word',
+                  display: '-webkit-box',
+                  WebkitLineClamp: 3,
+                  WebkitBoxOrient: 'vertical',
+                  overflow: 'hidden',
+                }}>
                   {doc.summary}
                 </p>
               )}
