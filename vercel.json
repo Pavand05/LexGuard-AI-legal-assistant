@@ -8,6 +8,8 @@
   },
   "rewrites": [
     { "source": "/auth/(.*)", "destination": "/api" },
+    { "source": "/agent/(.*)", "destination": "/api" },
+    { "source": "/agent", "destination": "/api" },
     { "source": "/upload", "destination": "/api" },
     { "source": "/chat", "destination": "/api" },
     { "source": "/documents(.*)", "destination": "/api" },

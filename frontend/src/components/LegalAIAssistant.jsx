@@ -113,6 +113,16 @@ const LegalAIAssistant = ({ user, token, onLogout }) => {
     setTimeout(() => setToast(null), 4000);
   };
 
+  // Safe JSON response parser
+  const safeJson = async (res) => {
+    try {
+      const txt = await res.text();
+      return JSON.parse(txt);
+    } catch {
+      return { error: `Server returned non-JSON response (${res.status} ${res.statusText})` };
+    }
+  };
+
   // Multi-Agent Execution Handler
   const runMultiAgentAnalysis = async (workflow = agentWorkflow, privacy = privacyMode) => {
     if (!extractedText) {
@@ -134,7 +144,7 @@ const LegalAIAssistant = ({ user, token, onLogout }) => {
           privacy_mode: privacy
         })
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || 'Multi-agent analysis failed');
       setAgentAnalysis(data.result);
       if (data.result?.obligations) {
@@ -154,8 +164,8 @@ const LegalAIAssistant = ({ user, token, onLogout }) => {
     try {
       setEvalLoading(true);
       const res = await fetch(`${API}/agent/evaluation`);
-      const data = await res.json();
-      if (res.ok) setEvaluationData(data.evaluations || []);
+      const data = await safeJson(res);
+      if (res.ok && data.evaluations) setEvaluationData(data.evaluations);
     } catch (err) {
       console.error("Evaluation fetch error", err);
     } finally {
@@ -170,7 +180,7 @@ const LegalAIAssistant = ({ user, token, onLogout }) => {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` }
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || 'Benchmark run failed');
       setEvaluationData(data.results || []);
       showToast('Live comparative evaluation benchmark completed!');
